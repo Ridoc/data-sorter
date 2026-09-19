@@ -1,0 +1,87 @@
+# NAS File Sorter Configuration
+---
+ollama:
+  endpoint: "http://localhost:11434"
+  model: "qwen2.5-coder:7b"
+  fallback_model: "qwen2.5:1.5b"
+  timeout: 60
+  batch_size: 8
+  options:
+    temperature: 0.0
+    seed: 42
+
+nas:
+  root: "/mnt/NAS-Zeno/"
+  max_depth: null  # null = unlimited
+
+confidence:
+  auto_accept: 85     # 🟢 green — auto-accepted
+  require_review: 50  # 🟡 yellow — user must accept/modify/reject
+  # below 50 → 🔴 red → _Unsorted_Review
+
+taxonomy:
+  top_level:
+    - "Zeno"
+    - "Family"
+    - "Company"
+    - "Projects"
+    - "Media"
+    - "Archives"
+    - "_Unsorted_Review"
+
+  # Pre-defined category tree (LLM may propose new subfolders under these)
+  categories:
+    Zeno:
+      - "Documents"
+      - "Downloads"
+      - "Bilder"
+      - "Videos"
+      - "Finances"
+      - "Career"
+      - "Health_Research"
+      - "Phone_Backups"
+      - "Obsidian_Vault"
+      - "Design"
+    Family:
+      - "Mom"
+      - "Andreas"
+      - "Emily"
+    Company:
+      - "5_Circles"
+    Projects:
+      - "ERGO_Paphos"
+      - "FC_Squad"
+      - "GameClanFinder"
+      - "Websites"
+      - "Video_Projects"
+      - "Dark_Deep_Space"
+      - "SmoothTrading"
+    Media:
+      - "DJ_Stuff"
+      - "Music"
+      - "Photos"
+      - "Videos"
+    Archives:
+      - "Old_Projects"
+      - "System"
+      - "_Duplicates_Delete"
+
+dedup:
+  enabled: true
+  exact_hash: true       # SHA-256 content hash
+  image_phash: true      # perceptual hash for image near-duplicates
+  keep_newest: true      # prefer file with latest mtime
+  trash_dir: "_Duplicates_Delete"  # staging folder under Archives/
+
+age:
+  delete_candidate_years: 10  # files untouched this long → suggest delete (if temp/backup)
+  archive_years: 5             # files untouched this long → consider Archives/Old_Projects
+
+logging:
+  csv_dir: ".sort_logs"
+  undo_csv: "sort_undo.csv"
+
+embeddings:
+  enabled: false        # 🔔 DISABLED by default — enable for centroid matching + clustering
+  model: "nomic-embed-text"
+  similarity_threshold: 0.85
