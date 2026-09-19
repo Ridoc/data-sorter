@@ -1,0 +1,67 @@
+# NAS AI File Sorter — Session Log 002
+# AUTO: session-close (subagent) — verified facts only
+---
+date: 2026-09-17
+session_type: folder-move-gate build (executed plan-spec-russian-doll)
+agent: session-close
+---
+# FACT_ACCT: {added: session-log-002 + 3 lessons + 2 tech-debt entries; moved: 0;
+# dropped: plan-spec-russian-doll.yaml (deleted in commit 29080c0)}
+# STATUS: COMMITTED (29080c0)
+
+## PLAN
+plan_spec: plan-spec-russian-doll.yaml   # project-unit grouping / canonical naming
+phase: build (execute plan)
+batches_total: 5
+batches_done: 5   # all [x] -> plan archived + deleted per lifecycle
+
+## BATCHES COMPLETED
+BATCH 1: Project-root detection
+  - context.py: project_root(rel_path) climbs ancestors; detects Audacity (.aup/.aup3,
+    *_data/, audacity_temp/), Premiere (Auto-Save/Preview Files/).
+  - folder_classifier.identify_cohesive_folders: groups by project_root(), not immediate parent.
+BATCH 2: Canonicalize target naming
+  - context.py: canonicalize_path(llm_path, source_unit_name) preserves exact source folder
+    name (Hypnose -> Hypnose, not Hypnosis); coalesces spelling variants.
+BATCH 3: Classification reliability — retry + smaller batch
+  - classifier.py: batch_size 15 -> 8; retry_attempts: int = 2 ctor default (NOT in config.yaml,
+    NOT wired into classify_batch — see tech-debt).
+  - parse-fail -> _retry_with_smaller_batches (recursive halving); fallback model -> _Unsorted.
+BATCH 4: Folder semantic classification (Berufliches -> Zeno, not Company)
+  - sort.py _classify_folders: passes ancestor chain + language hint to LLM.
+BATCH 5: Integration verification
+  - sort.py --dry-run on /mnt/NAS-Zeno/Berufliches: Hypnose/ -> ONE folder move (not 6);
+    zero false _DELETE; Berufliches/ -> Zeno/... not Company/5_Circles.
+
+## VERIFIED OUTCOMES (commit 29080c0 + code inspection)
+true_accounting: "total_moves now counts file_count inside folder units (file_move_count +
+  folder_move_count), NOT folder count. Prior: total_moves += len(approved_folder_moves)."
+confirmation_gate: "sort.py:578 — after analysis+summary, user approves/rejects EACH folder
+  move via stdin ('1 3' | 'all' | 'none') before mutation. File moves keep existing confidence
+  gate. --execute auto-approves all folder moves."
+audio_semantics: "Audacity .au project folders -> Projects/<Name>/Audio/<Name> via deterministic
+  override (context_hint AUDACITY_PROJECT). .au chunks NEVER marked delete (sorter/classifier.py
+  context hint rule + sort.py override)."
+dedup_scope: "dedup_files = list(files) — SHA-256 exact dedup runs over ALL files INCLUDING
+  inside cohesive folder groups. Audacity .au chunks unique by sequential name -> no false match."
+file_count: "294 files scanned in dry-run (all included in dedup pass)."
+dry_run: "verified — Hypnose/ -> single folder move; zero false _DELETE; Berufliches/ -> Zeno/."
+
+## CHANGES (commit 29080c0)
+deleted:   plan-spec-russian-doll.yaml   # consumed plan -> deleted per lifecycle (kept in git log)
+modified:  sort.py                      # folder-move gate, true accounting, Audio semantics, dedup-over-all
+modified:  sorter/classifier.py         # batch_size 15->8, retry_attempts ctor default
+modified:  sorter/context.py            # project_root, canonicalize, audacity detection
+modified:  sorter/executor.py           # folder-move execution + file-count accounting
+modified:  sorter/folder_classifier.py  # group by project root
+
+## TEST STATUS
+note: "qa-tester not spawned in this session-close pass (sandbox: optional deps missing)."
+prior_session: "183/193 pass (session-001); 10 failures are ENVIRONMENTAL (missing optional deps:
+  questionary x7, python-magic x2, imagehash x1), NOT logic."
+runner: "python3 -m pytest tests/ -q --tb=line (PYTHONPATH=.)"
+
+## GIT
+repo_root: "/mnt/NAS-Zeno/OpenCode/Data Sorter (CIFS mount, no git op support)"
+git_dir: "/tmp/data-sorter-git (local FS, --separate-git-dir)"
+commit: 29080c0

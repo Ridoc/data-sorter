@@ -1,0 +1,291 @@
+# NAS AI File Sorter — Lessons Ledger (append-only)
+# author_lessons_brain: extracted from session diffs + findings
+- id: 2026-09-17-cifs-git-dir
+  domain: infra/vcs
+  root_cause: "CIFS/NAS mount rejects git object writes (immutable fs layer); naive
+    `git init` in mount point silently fails / corrupts index."
+  prevention: "Always locate real git repo on a local filesystem volume and point
+    the workdir's git at it via `git init --separate-git-dir /local/path`. Keep the
+    git-dir on the same machine but on a non-CIFS volume."
+  session: nas-file-sorter-001
+  confidence: verified
+
+- id: 2026-09-17-ollama-batch-kv
+  domain: perf/llm
+  root_cause: "Sending files one-by-one to Ollama forces a full system-prompt re-encode
+    every call — KV cache is thrown away between requests, dominating latency."
+  prevention: "Batch 10-20 files per request with a FIXED (string-equal) prompt template
+    so Ollama can reuse the KV cache for the repeated system prompt. qwen2.5-coder:7b
+    32K ctx absorbs large batches."
+  session: nas-file-sorter-001
+  confidence: verified
+
+- id: 2026-09-17-dry-run-mandatory
+  domain: safety/ux
+  root_cause: "A classification tool that can mutate the user's NAS on first run has
+    zero trust margin — one wrong category path and real data is orphaned."
+  prevention: "Dry-run is the ONLY default; execution path gated behind explicit user
+    confirmation in the TUI. Undo via CSV log (hash-verified) is the safety net, not
+    the primary gate."
+  session: nas-file-sorter-001
+  confidence: verified
+
+- id: 2026-09-17-premiere-temp-safe-delete
+  domain: classification
+  root_cause: "Adobe Premiere creates Auto-Save (.prauto) and Preview Files (.prv)
+    that look like real project artifacts but are regenerable caches — classifying
+    them into Projects/ bloats the tree and risks user re-importing stale proxies."
+  prevention: "Explicit DELETE rule in the LLM prompt for Premiere temp patterns;
+    these route to staging-trash (Archives/_Duplicates_Delete/) not a project folder."
+  session: nas-file-sorter-001
+  confidence: verified
+
+# --- NEW from session-001 verification ---
+- id: 2026-09-17-test-dep-bootstrap
+  domain: ci/devex
+  root_cause: "Tests import questionary / python-magic / imagehash at module level;
+    sandbox env never ran `pip install -r requirements.txt`, so 10/193 tests surface
+    as failures (9x ModuleNotFoundError + 1 masked imagehash assert) — looks like bugs
+    but is purely missing optional deps."
+  prevention: "Add a CI bootstrap step (or a `setup` Make target) that installs deps
+    BEFORE pytest; better: guard optional imports in source + tests so a missing dep
+    skips/saxes clearly rather than masquerading as a code failure."
+  session: nas-file-sorter-001
+  confidence: verified
+
+- id: 2026-09-17-imagehash-masked-assert
+  domain: testing
+  root_cause: "test_image_near_dup asserts len(results)==1 but imagehash absent makes
+    scan_image_near_duplicates return 0 — the real failure mode (hash mismatch) is
+    hidden behind an import error that pytest reports as a plain AssertionError."
+  prevention: "Tests depending on optional libs should `pytest.importorskip` at the top
+    so the skip reason (missing lib) is visible, not a silent 0-result assert."
+  session: nas-file-sorter-001
+  confidence: verified
+
+# --- NEW from session-002 verification ---
+- id: 2026-09-17-llm-7b-routing
+  domain: classification/quality
+  root_cause: "qwen2.5-coder:7b (7B) hallucinates or mis-routes complex folder-to-category
+    decisions (e.g. Berufliches/ ambiguous) when classifying free-form paths — the model
+    lacks deterministic grounding for routing rules."
+  prevention: "Always add deterministic post-processing (context_hint + canonicalize_path)
+    for critical classification decisions; let the LLM propose, then a deterministic layer
+    overrides before any file is moved."
+  session: nas-file-sorter-002
+  confidence: verified
+
+- id: 2026-09-17-cifs-git-tmp
+  domain: infra/vcs
+  root_cause: "CIFS/NAS mount rejects git object writes; the workdir's .git must live on
+    local FS (pinned to /tmp/data-sorter-git via --separate-git-dir), never on the CIFS
+    volume itself."
+  prevention: "Always `git init --separate-git-dir /tmp/<repo>-git` for NAS-mounted workdirs;
+    stage/commit through the local git-dir."
+  session: nas-file-sorter-002
+  confidence: verified
+
+- id: 2026-09-17-audacity-au-dedup
+  domain: classification/dedup
+  root_cause: "Audacity .au audio chunks inside <Project>_data/ folders are unique by
+    sequential segment name (e.g. 1_000.au, 1_001.au) — identical content never recurs
+    across segments, so SHA-256 dedup cannot false-match them."
+  prevention: "Safe to run SHA-256 exact dedup over ALL files including inside cohesive
+    folder groups (dedup_files = list(files)); no Audacity _data/_au exclusions needed."
+  session: nas-file-sorter-002
+  confidence: verified
+
+# --- NEW from session-003 verification ---
+- id: 2026-09-17-7b-missing-json-field
+  domain: llm/validation
+  root_cause: "7B LLM (qwen2.5-coder:7b) does not reliably emit optional JSON fields —
+    suggested_name was omitted in some responses, which would crash downstream pipeline
+    expecting the field."
+  prevention: "validate_suggested_name handles missing/None suggested_name gracefully
+    (returns None -> keep original filename); never assume an optional LLM field is present.
+    Treat all optional fields as untrusted until validated."
+  session: nas-file-sorter-003
+  confidence: verified
+
+- id: 2026-09-17-csv-undo-original-name
+  domain: data-integrity/undo
+  root_cause: "Content-aware rename changes filenames before the user can review — undo
+    must reconstruct the ORIGINAL name, not just reverse the move direction."
+  prevention: "executor.py log_move CSV now includes an 'original_name' column (6th field:
+    source, target, source_hash, action, reason, original_name). undo.py reads original_name
+    to restore the pre-rename filename during reconstruction. Without the column, undo
+    recovers the move but loses the rename history — data integrity gap."
+  session: nas-file-sorter-003
+  confidence: verified
+
+# --- NEW from session-004 verification (semantic-filing) ---
+- id: 2026-09-18-embedding-cost-ladder
+  domain: perf/llm
+  root_cause: "Running full LLM classification (qwen2.5-coder:7b) on every loose file
+    is expensive in both tokens and latency; most files semantically belong to an obvious
+    folder, so the heavy model is wasted on routing decisions that similarity math can resolve."
+  prevention: "Laddered semantic routing — embed with cheap nomic-embed-text (768-dim),
+    cosine-match against folder centroids first (>= 0.85 threshold); only fall back to the
+    heavy LLM for files that don't match any centroid. Embeddings cost ~100x less than LLM
+    tokens. Config-gate the whole layer (embeddings.enabled=false default — safe opt-in)."
+  session: semantic-filing
+  confidence: verified
+
+- id: 2026-09-18-embedding-cache-key
+  domain: perf/caching
+  root_cause: "Re-embedding all resident files every run wastes Ollama compute; a naive
+    filename-only cache key goes stale when files move or are edited (same name, different
+    content) — returning a wrong embedding silently corrupts centroid matching."
+  prevention: "Cache key = {rel_path}:{mtime}:{size} (full FileEntry identity) so mtime or
+    size change forces re-embed. Persisted to .sort_logs/embeddings_cache.json; cache-hit
+    short-circuits Ollama entirely. On CIFS write failure OSError is caught silently — the
+    cache is a speed optimization, not a correctness requirement. Centroids cached separately
+    in .sort_logs/centroids.json (folder-level; rebuilt on cache miss)."
+  session: semantic-filing
+  confidence: verified
+
+- id: 2026-09-18-embeddings-vs-llm-roles
+  domain: llm/model-selection
+  root_cause: "Conflating the embedding model and the generation LLM — using qwen2.5-coder:7b
+    (a 7B generation model) for vector math / centroid computation is slower, heavier, and
+    semantically wrong (generation tokens != embedding space)."
+  prevention: "Use nomic-embed-text (dedicated embedding model) for ALL vector operations:
+    cosine_similarity, centroid, match_folder, KMeans input. Reserve qwen2.5-coder:7b ONLY
+    for generative naming (name_cluster) and content classification. Never mix roles — the
+    768-dim embedding space is the contract for similarity; generation tokens are not."
+  session: semantic-filing
+  confidence: verified
+
+# --- NEW from session-005 verification (sorting-correctness) ---
+- id: 2026-09-18-path-context-guard
+  domain: classification/routing
+  root_cause: "Extension routing applied blindly to files already under top-level taxonomy
+    paths (Projects/, Zeno/, Media/, Family/, Company/, Archives/) mis-routes files whose
+    purpose is project/subject-affiliated, not generic category-affiliated. E.g. a .py file
+    inside Projects/FC_Squad/ belongs to that project; routing it to Projects/ generically
+    orphans it from its sibling files."
+  prevention: "Path-context guard in route_by_extension: if rel_path starts with ANY top-level
+    taxonomy prefix, return None (skip routing) — preserve existing project/subject affiliation.
+    Only apply extension routing to truly unorganized files (loose files in Diverse-Daten/ etc.).
+    This is a deliberate tradeoff: deterministic rules skip the LLM for obvious loose files but
+    MUST NOT override intentional existing placement."
+  session: sorting-correctness
+  confidence: verified
+
+- id: 2026-09-18-ext-vs-llm-balance
+  domain: llm/cost
+  root_cause: "Running full qwen2.5-coder:7b LLM classification on every loose file in
+    Diverse-Daten/ wastes tokens on files whose category is obvious from extension (.py, .jpg,
+    .pdf, .mp4). Even at temperature=0, the 7B model adds latency + nondeterminism risk for
+    trivial routing decisions that a lookup table resolves in microseconds."
+  prevention: "Extension routing as L0 pre-classifier BEFORE LLM: deterministic ext->category
+    rules absorb the bulk of obvious loose files (85% of Diverse-Daten/ in testing), leaving
+    only unknown/mixed extensions for the LLM. Config-gate: routing.enabled (default true, safe).
+    Mirrors the session-004 embedding-cost-ladder pattern but uses zero-cost rules instead of
+    nomic-embed-text embeddings — cheapest possible pre-filter."
+  session: sorting-correctness
+  confidence: verified
+
+- id: 2026-09-18-folder-self-nest-guard
+  domain: safety/classification
+  root_cause: "LLM can suggest a target folder INSIDE the source folder's own path tree —
+    a self-nesting cascade where a file moves into a subfolder that then gets deeper-sorted
+    into itself, orphaning the file or creating an infinite loop. Also, LLM mis-classifies
+    folder type when mixed-content confuses the model (text-heavy folder routed to Media/)."
+  prevention: "(a) Self-nesting guard: canonicalize source and target paths; BLOCK the move if
+    target_path starts with source_path (substring path-component match, not prefix). (b)
+    Dominant-type override: compute majority MIME media_kind in folder; if 50%+ same kind,
+    pin category to that dominant type. format_folder_for_prompt now prepends
+    'Dominant media kind: {kind}' so LLM gets deterministic grounding for folder-level type
+    decisions. Relates to 2026-09-17-llm-7b-routing (folder mis-routing) but root_cause is
+    self-nesting cascade + mixed-content confusion, not hallucination."
+  session: sorting-correctness
+  confidence: verified
+
+# --- NEW from session-006 verification (folder-context-preservation) ---
+- id: 2026-09-18-ancestor-context-loss
+  domain: classification/folder
+  root_cause: "resolve_folder_move() used only the leaf folder name as the target, discarding
+    all ancestor context. A folder at 'Diverse Daten/EVE/-Y-/old_G_files/bilder&screens'
+    moved to Media/Photos/bilder&screens — losing 'EVE' context, risking collisions with
+    other users' 'bilder&screens' folders, and orphaning user-intent hierarchy."
+  prevention: "meaningful_ancestors() extracts non-junk ancestor segments from the folder's
+    relative path (dropping scan_root, leaf, temp dirs, short names, old_* prefixes) and
+    inserts them into the target: cat_path/ancestors/leaf -> Media/Photos/EVE/bilder&screens.
+    Each segment validated by _is_junk_segment() so only user-meaningful context is preserved."
+  session: folder-context-preservation
+  confidence: verified
+
+- id: 2026-09-18-name-normalization-double-append
+  domain: classification/folder
+  root_cause: "LLM sometimes includes the leaf folder name inside category_path (SQ_Tutorials
+    vs SQ Tutorials). Naive string comparison treats these as different -> double-append:
+    target becomes Media/Music/SQ_Tutorials/SQ_Tutorials."
+  prevention: "Normalized name comparison in resolve_folder_move(): lowercase + replace
+    underscore/space/hyphen before comparing category_path last segment vs source leaf name.
+    If they match post-normalization -> no append (LLM already included the leaf). Same
+    normalization applied to taxonomy child-segment case (Media/videos -> Media/Videos)
+    to prevent duplicate subfolders from case drift."
+  session: folder-context-preservation
+  confidence: verified
+
+- id: 2026-09-18-delete-guard-user-content
+  domain: safety/classification
+  root_cause: "Age-based deletion rules target OLD_TEMP_BACKUP files for auto-delete, but
+    3D models (.skp, .blend, .obj), design sources (.psd, .xcf, .ai), and user media
+    (.jpg, .mp3) are irreplaceable user content — a single false-positive delete on a
+    project .skp or family photo is unrecoverable."
+  prevention: "_DELETE_PROTECTED_EXT set + should_protect_from_delete() guard in sort.py:
+    any file/folder classified 'delete' is checked; if 50%+ children (folder) or the file
+    ext (file-level) is protected -> reroute action to 'move' -> Archives/Old_Projects
+    for manual review. Confidence capped at 85. Unprotected temp files (.tmp, .exe, .msi)
+    still eligible for deletion."
+  session: folder-context-preservation
+  confidence: verified
+
+# --- NEW from session-007 verification (content-understanding) ---
+- id: 2026-09-18-subject-over-filetype
+  domain: classification/llm
+  root_cause: "The LLM (qwen2.5-coder:7b) routes image-heavy folders by DOMINANT FILE TYPE
+    first, so a folder named 'Entwürfe Logo' full of .jpg/.png files gets routed to Media/Photos
+    even though its subject purpose is clearly design artwork. The model's default heuristic
+    is 'extension -> category' unless explicitly told otherwise."
+  prevention: "Embed subject-first directive as the FIRST rule in every LLM prompt (both file
+    and folder classification): 'Classify by SUBJECT first (folder/filenames reveal purpose),
+    NOT by dominant file type.' Follow with 'Image files do NOT always mean Media/Photos.'
+    This overrides the type-default bias. NO hardcoded keyword lists — let the LLM reason
+    from context, but prime it with the correct priority ordering."
+  session: content-understanding
+  confidence: verified
+
+- id: 2026-09-18-taxonomy-vocabulary-gate
+  domain: classification/taxonomy
+  root_cause: "The LLM selects category_path from the taxonomy string it receives — it does
+    NOT invent new top-level subfolders by default. When 'Design' was absent from Zeno children
+    in config.yaml, the LLM could not route design imagery to Zeno/Documents/Design even with
+    perfect subject understanding, because that path did not exist in its decision surface.
+    It fell back to Media/Photos (nearest type match for images)."
+  prevention: "Ensure the taxonomy vocabulary in config.yaml is COMPREHENSIVE before relying
+    on LLM routing for edge categories. New categories (Design, etc.) must be added to config.yaml
+    AND covered by integration tests (TestDesignInTaxonomy) verifying: load_taxonomy() picks it
+    up + get_taxonomy_yaml_string() surfaces it to the LLM prompt. The taxonomy IS the LLM's
+    constraint surface — a missing category is a missing routing option."
+  session: content-understanding
+  confidence: verified
+
+- id: 2026-09-18-subject-prompt-anchor
+  domain: llm/prompt-engineering
+  root_cause: "The folder name (the single strongest subject signal for classification) was
+    buried as just one line among many in format_folder_for_prompt's output (path, context,
+    hint, age, file_count, size, types, samples). The LLM drowned the subject signal in
+    aggregate metadata noise, leading to type-based routing decisions."
+  prevention: "Surface the folder name as an explicit 'Subject: <folder_name>' line as the
+    FIRST context field in the prompt. This anchors the LLM's attention on the most
+    discriminative signal. Apply the same anchoring principle to file prompts (filename
+    is already prominent in the file entry). Also increase sample_files display slice
+    (5->10) so more filename context reaches the model."
+  session: content-understanding
+  confidence: verified
+
+# NOTE: do NOT strip date/provenance. Do NOT delete while open risk remains.
+# Consolidate: scan for dup root_cause -> MERGE, keep LATEST prevention.

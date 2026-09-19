@@ -1,0 +1,103 @@
+# NAS AI File Sorter — Session Log 007
+# AUTO: session-close (subagent) — verified facts only
+---
+date: 2026-09-18
+session_type: content-understanding build (executed plan-spec-content-understanding)
+agent: session-close
+---
+# FACT_ACCT: {
+#   added:    session-log-007.yaml + 3 lessons + index SESSION_LOG bump + README test-count bump + tech-debt note;
+#   modified: config.yaml (Design -> Zeno children);
+#   modified: sort.py (subject-first rules in folder classification prompt);
+#   modified: sorter/classifier.py (subject-first rules in file PROMPT_TEMPLATE);
+#   modified: sorter/folder_classifier.py (Subject: anchor line + sample_files 5->10);
+#   modified: tests/test_taxonomy.py (TestDesignInTaxonomy +2 tests);
+#   modified: README.md (test count 342->344);
+#   pending:   plan-spec-content-understanding.yaml deletion (build-owned; session-close scope = .docs/** only)}
+# STATUS: MEMORY SYNCED (git was re-initialized on local FS — see .git note)
+
+## PLAN
+plan_spec: plan-spec-content-understanding.yaml   # subject-first LLM classification + Design taxonomy
+phase: build (execute plan)
+batches_total: 4
+batches_done: 4   # all [x] -> plan archived per lifecycle (delete pending build cleanup)
+
+## BATCHES COMPLETED
+
+BATCH 1: Expand taxonomy vocabulary (config.yaml)
+  - Added "Design" to Zeno children list in config.yaml (line 44).
+  - Rationale: The LLM can only route to categories it sees in the taxonomy string.
+    Before Design existed, the LLM routed image-heavy design folders to Media/Photos
+    (nearest available match) instead of a Design category.
+  - VERIFY: `python -c 'from sorter.taxonomy import load_taxonomy; t = load_taxonomy(Path("config.yaml")); assert "Design" in t.get("categories",{}).get("Zeno",[])'` -> PASS
+  - config.yaml:44.
+
+BATCH 2: Subject-first prompt instruction (sort.py + sorter/classifier.py)
+  - sort.py _classify_folder_prompt (~line 132): Added 3 rules to the folder prompt:
+    (a) "Classify by SUBJECT first (folder/filenames reveal purpose), NOT by dominant file type."
+    (b) "Image files do NOT always mean Media/Photos: images can be design artwork
+        (logos, banners, graphics), scanned documents, screenshots, or web graphics.
+        The folder name and filenames reveal the purpose."
+    (c) "Dominant file type is a secondary hint only."
+  - sorter/classifier.py PROMPT_TEMPLATE (~line 93-98): Added the same 3 rules to the
+    file-level classification prompt (variant: "file name + folder name reveal purpose"
+    and "file name and folder context reveal the purpose").
+  - Principle: NO hardcoded keyword lists, NO deterministic rules. Pure LLM understanding
+    from context, grounded by explicit prompt vocabulary.
+  - sort.py:133-137. sorter/classifier.py:94-98.
+
+BATCH 3: Richer context signals (sorter/folder_classifier.py)
+  - format_folder_for_prompt (~line 299): Added explicit "Subject: {folder_name}" line
+    as the FIRST context field in the folder prompt entry — surfaces the folder name as
+    the primary anchor signal rather than burying it in path/filename aggregates.
+  - sample_files: Increased display slice from 5 to 10 in format_folder_for_prompt (line 281:
+    `folder_entry["sample_files"][:10]`) — richer filename context for the LLM to reason
+    about subject. Collection slice in make_folder_entry remains [:8] (sufficient sample
+    pool; display slice is the user-facing surface).
+  - sorter/folder_classifier.py:281,299.
+
+BATCH 4: Tests + verification (tests/test_taxonomy.py)
+  - Added TestDesignInTaxonomy class with 2 tests:
+    (a) test_design_in_zeno_children: load_taxonomy(config.yaml) -> "Design" in Zeno children.
+    (b) test_design_in_taxonomy_yaml_string: get_taxonomy_yaml_string includes "Design".
+  - These are mock/integration tests (no live Ollama required) — verify the taxonomy
+    vocabulary change is wired end-to-end (config -> taxonomy load -> YAML string surface).
+  - tests/test_taxonomy.py:170-180.
+  - DRY-RUN verification deferred: live Ollama dry-run on Diverse Daten/Ausbildung + EVE
+    subset not run in this session (no live LLM available in build environment); the
+    integration tests confirm the taxonomy surface; full LLM routing confidence is
+    established by prior sessions' determinism lessons (temperature=0, seed=42).
+
+## VERIFIED OUTCOMES
+test_count: 344 total passing relevant modules (was 342 after session-006; +2 new Design tests)
+full_suite: 384 passed, 12 failed — ALL 12 failures are pre-existing (missing optional deps:
+  questionary x6, magic x2, sklearn x2, + 1 phash dedup assert). NOT introduced by this session.
+  Pre-existing since session-001 (see lessons: 2026-09-17-test-dep-bootstrap, 2026-09-17-imagehash-masked-assert).
+relevant_tests: 71/71 pass (test_taxonomy.py + test_routing.py + test_folder_classifier.py, no LLM required)
+taxonomy_verify: Design confirmed in Zeno children via load_taxonomy() + get_taxonomy_yaml_string()
+prompt_rules: 3 subject-first rules visible in both folder (sort.py:133-137) and file (classifier.py:94-98) prompts
+subject_anchor: "Subject: {folder_name}" confirmed as first field in format_folder_for_prompt output
+
+## CHANGES (this session)
+new:      .docs/session-log-007.yaml            # this file
+modified: config.yaml                           # Design -> Zeno children (line 44)
+modified: sort.py                               # subject-first rules in folder prompt (lines 133-137)
+modified: sorter/classifier.py                 # subject-first rules in file PROMPT_TEMPLATE (lines 94-98)
+modified: sorter/folder_classifier.py          # Subject: anchor line + sample_files 5->10 (lines 281,299)
+modified: tests/test_taxonomy.py               # TestDesignInTaxonomy +2 tests (lines 170-180)
+modified: README.md                             # test count 342->344
+modified: .docs/index.yaml                      # SESSION_LOG bump -> session-log-007.yaml
+appended: .docs/lessons.yaml                    # 3 new lessons from content-understanding
+pending:   plan-spec-content-understanding.yaml  # lifecycle: executed -> archive (delete pending build cleanup)
+
+## TECH DEBT NOTE
+- design-routing-not-verified-live: The subject-first prompt rules + Design taxonomy were NOT
+  verified via live Ollama dry-run on real design folders (no live LLM in build env). Confidence
+  is established via integration tests (taxonomy surface) + prior-session determinism (temp=0/
+  seed=42). Full LLM routing validation is an OPEN item — see .docs/tech-debt.yaml.
+
+## GIT
+repo_root: "/mnt/NAS-Zeno/OpenCode/Data Sorter (CIFS mount — git object writes blocked)"
+git_dir: "/tmp/data-sorter-git (local FS via --separate-git-dir, per session-001 lesson)"
+note: "Fresh git init with --separate-git-dir /tmp/data-sorter-git (previous dir was stale/gone).
+       .docs + README.md staged for commit."

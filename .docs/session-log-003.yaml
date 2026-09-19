@@ -1,0 +1,69 @@
+# NAS AI File Sorter — Session Log 003
+# AUTO: session-close (subagent) — verified facts only
+---
+date: 2026-09-17
+session_type: content-renaming build (executed plan-spec-content-renaming)
+agent: session-close
+---
+# FACT_ACCT: {added: session-log-003 + 2 lessons; moved: 0; dropped: plan-spec-content-renaming.yaml
+#   (deleted in working tree after e11c943, staged by session-close commit)}
+# STATUS: COMMITTED (e11c943)
+
+## PLAN
+plan_spec: plan-spec-content-renaming.yaml   # content-aware file renaming via LLM suggestions
+phase: build (execute plan)
+batches_total: 4
+batches_done: 4   # all [x] -> plan archived + deleted per lifecycle
+
+## BATCHES COMPLETED
+BATCH 1: LLM prompt for rename suggestions
+  - classifier.py PROMPT_TEMPLATE: adds optional "suggested_name" JSON field to per-file
+    classification output; preserves original file extension exactly in suggested_name.
+  - Prompt rule: "Omit suggested_name entirely if the file name is already descriptive and specific."
+  - classifier.py:106-109, 252 (format into PROMPT_TEMPLATE).
+
+BATCH 2: Rename validation gate
+  - classifier.py validate_suggested_name(suggested_name, original_name) -> str | None:
+    validates extension preservation + sanity; returns None if invalid (keep original).
+  - classifier.py:22-49.
+
+BATCH 3: Skip-rename guard for media
+  - classifier.py should_skip_rename(mime) -> bool: True for image/*, video/*, audio/* —
+    media files never renamed (no reliable content extraction).
+  - Integrated into sort.py pipeline: should_skip_rename check precedes rename logic.
+  - classifier.py:67-75; sort.py:209-210.
+
+BATCH 4: Pipeline integration + CSV undo log
+  - sort.py: per-file rename display in dry-run summary ("rename -> <suggested>");
+    move dict carries suggested_name through to executor.
+  - sort.py:313-323 (display), 742 (move dict).
+  - executor.py: _move_file logs "original_name" column in undo CSV — reconstructs
+    original filenames after content-aware rename during undo.
+  - executor.py:103-121 (CSV header + original_name field), 174-183 (rename logging).
+
+## VERIFIED OUTCOMES (commit e11c943 + code inspection)
+pipeline_surface: "sort.py line 209 imports validate_suggested_name + should_skip_rename;
+  per-file results display rename suggestions (line 313-323) with detected language tag."
+csv_undo_log: "executor.py log_move (line 103) now writes 6 columns: source, target, source_hash,
+  action, reason, original_name — enabling undo to reconstruct pre-rename filenames."
+7b_validation: "validate_suggested_name handles missing suggested_name field gracefully (7B LLM
+  does not reliably emit optional JSON fields) — returns None, no crash."
+media_guard: "should_skip_rename blocks rename for all image/video/audio MIME types;
+  tests confirm 8 MIME cases (image/jpeg, image/png, video/mp4, video/x-matroska,
+  audio/mpeg, audio/wav, text/plain, application/pdf, None)."
+
+## CHANGES (commit e11c943)
+modified:  sorter/classifier.py       # PROMPT_TEMPLATE rename rule, validate_suggested_name, should_skip_rename
+modified:  sort.py                    # per-file rename display + move dict with suggested_name
+modified:  sorter/executor.py         # CSV undo log with original_name column
+new tests:  +17 rename tests (test_classifier.py, test_executor.py) -> 262 total passing
+
+## TEST STATUS
+total: 262 tests collected (pytest --co -q)
+new: +17 rename/validation tests
+runner: "python3 -m pytest tests/ -q --tb=line (PYTHONPATH=.)"
+
+## GIT
+repo_root: "/mnt/NAS-Zeno/OpenCode/Data Sorter (CIFS mount, no git op support)"
+git_dir: "/tmp/data-sorter-git (local FS, --separate-git-dir)"
+commit: e11c943

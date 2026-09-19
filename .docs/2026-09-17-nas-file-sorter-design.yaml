@@ -1,0 +1,225 @@
+# NAS AI File Sorter — Design Doc
+---
+version: "1.0"
+status: draft
+author: architect
+date: 2026-09-17
+---
+
+## OVERVIEW
+
+CLI tool that scans NAS mount `/mnt/NAS-Zeno/`, classifies files via local Ollama (`qwen2.5-coder:7b`), presents interactive TUI review (Rich/Questionary), then moves files with CSV undo log.
+
+## CORE STACK
+
+| Layer | Tech | Why |
+|-------|------|-----|
+| Lang | Python 3.11+ | de facto for LLM tooling, rich ecosystem |
+| TUI | `rich` + `questionary` | colored trees, confidence indicators, accept/reject/modify per item |
+| LLM | Ollama REST API (`qwen2.5-coder:7b`) | local, 32K context for batch, ROCm GPU accelerated |
+| Extraction | `markitdown` (docs), `ffprobe` (video), `Pillow` (image EXIF), `python-magic` (mime) | |
+| Config | YAML | human-editable taxonomy + ignore patterns |
+
+## TAXONOMY (user-approved)
+
+```
+/mnt/NAS-Zeno/
+├── Zeno/                          ← YOUR stuff
+│   ├── Downloads/                ← #OS USER FILES/Downloads
+│   ├── Bilder/                   ← #OS USER FILES/Bilder
+│   ├── Videos/                   ← #OS USER FILES/Videos
+│   ├── Documents/                ← merged: root docs + #OS USER FILES/Dokumente
+│   ├── Finances/
+│   ├── Career/
+│   ├── Health_Research/
+│   ├── Phone_Backups/
+│   └── Obsidian_Vault/            ← #NOTIZEN moved here
+│
+├── Family/
+│   ├── Mom/                       ← MOM + Tinas (Mom) Bilder merged
+│   ├── Andreas/
+│   └── Emily/
+│
+├── Company/                       ← PROMOTED
+│   └── 5 Circles/                 ← your company
+│
+├── Projects/
+│   ├── ERGO Paphos/               ← Emily's work (moved from Company)
+│   ├── FC Squad/
+│   ├── GameClanFinder/
+│   ├── Websites/                  ← DrPetrides, SmoothTrading, SwapHunter…
+│   └── ... (all #PROJECTS + VIDOE PROJEKTE preserved)
+│
+├── Media/
+│   ├── DJ_Stuff/
+│   ├── Music/
+│   └── Photos/
+│
+├── Archives/
+│   ├── Old_Projects/              ← Diverse Daten, Alte Jobs content
+│   └── System/                    ← synoreport, #recycle, .Trash
+│
+└── _Unsorted_Review/              ← low-confidence fallback
+```
+
+## LLM INTERFACE
+
+### Prompt Template (fixed for KV cache reuse)
+
+```
+You are a NAS file organizer. Given a file's metadata and content:
+
+FILE: {filename}
+TYPE: {mime_type}
+SIZE: {size_bytes}
+DATE: {modified_date}
+CONTENT: {extracted_text[:2000]}
+
+Existing folder structure on this NAS:
+{taxonomy_yaml}
+
+Rules:
+- Return JSON: {{"category_path": "path/from/root", "confidence": 0-100, "reason": "short"}}
+- category_path must start with one of the top-level folders above
+- If no existing category fits → propose a new subfolder under the best-matching top-level
+- confidence > 85 = auto-suggest, 50-85 = flag for review, < 50 = send to _Unsorted_Review
+- For Adobe Premiere temp files (Auto-Save, PRV files) → category_path "DELETE"
+```
+
+### Optimization (from community notes)
+- **Batch inference**: Send 10-20 files per Ollama request → reuse KV cache for repeated system prompt
+- **Parallel extraction**: Use ThreadPoolExecutor for content extraction (I/O bound)
+- **Confidence threshold**: configurable in config.yaml (default 85/50)
+
+## INTERACTIVE REVIEW FLOW
+
+```
+┌─────────────────────────────────────────────┐
+│  NAS File Sorter - Dry Run Results          │
+│                                              │
+│  📁 Root (/mnt/NAS-Zeno/)                   │
+│  ├─ 15 loose files found                    │
+│  ├─ 3 Adobe Premiere temp folders (DEL)     │
+│  └─ 12 existing subfolders analyzed         │
+│                                              │
+│  ┌─────────────────────────────────────────┐│
+│  │ Batch 1/3: Loose root files             ││
+│  │                                         ││
+│  │ 🟢 Dark Deep Space Roman.doc             ││
+│  │   → Zeno/Documents/       (conf: 92)   ││
+│  │ 🟡 Finanzplan 2015.xlsx                  ││
+│  │   → Zeno/Finances/        (conf: 71)   ││
+│  │ 🔴 Sequenz 01.wmv                       ││
+│  │   → Projects/Video_Projects/ (conf: 28) ││
+│  │                                         ││
+│  │ [Accept All] [Review Each] [Skip All]  ││
+│  └─────────────────────────────────────────┘│
+│                                              │
+│  [Proceed to Execute] [Re-run LLM] [Exit]  │
+└─────────────────────────────────────────────┘
+```
+
+Colors:
+- 🟢 Green (conf ≥ 85) — auto-accepted, shown for info
+- 🟡 Yellow (50-85) — user must accept/modify/reject
+- 🔴 Red (< 50) — queued for _Unsorted_Review unless user overrides
+
+## FILE SCANNER
+
+| Feature | Behavior |
+|---------|----------|
+| Walk | `os.walk` recursive, respects `.sortignore` |
+| Ignore | `OpenCode/`, `.git`, `.Trash-*`, `#recycle`, `@eaDir`, `Thumbs.db`, `.DS_Store` |
+| Depth | configurable max-depth (default = unlimited) |
+| Detection | `python-magic` for MIME type; extension fallback |
+
+## CONTENT EXTRACTION
+
+| File type | Extractor | Data used |
+|-----------|-----------|-----------|
+| PDF | markitdown | full text |
+| DOCX/XLSX/PPTX | markitdown | full text |
+| Images (JPG, PNG, HEIC) | Pillow + exiftool | EXIF date, GPS, camera model |
+| Videos (MP4, MOV, AVI, WMV) | ffprobe | creation date, codec, duration, resolution |
+| Audio (MP3, WAV, FLAC) | ffprobe | artist, album, duration |
+| Plain text / code | read first 2KB | shebang, content hints |
+| Binary/unknown | stat only | size, date, extension |
+
+## DEDUPLICATION
+
+| Feature | Scope |
+|---------|-------|
+| **Exact duplicates** | SHA-256 content hash — same file content at different paths |
+| **Image near-duplicates** | Perceptual hash (`imagehash` + Pillow) — resized/recompressed photos |
+| **Deletion method** | Move to staging trash folder `Archives/_Duplicates_Delete/` — never hard delete |
+| **Preference** | Keep newest `mtime`, flag older copy for deletion |
+| **Review** | Shown in TUI alongside classification results — user approves/rejects per duplicate pair |
+
+Dedup pass runs AFTER classification (scans all target folders for hash collisions).
+
+## SAFETY
+
+- **Dry run is MANDATORY** — never moves a file without user preview
+- **CSV undo log** — every move logged with: `timestamp,original_path,target_path,confidence,file_hash`
+- **Undo command** — `sort.py --undo` reads CSV, reverts all moves (file hash verified for collision detection)
+- **Adobe Premiere temp** — flagged for deletion (auto-saves are safe to remove; preview files regenerate)
+
+## CLI USAGE
+
+```bash
+# Full run (dry preview → confirm → execute)
+python sort.py
+
+# Undo last run
+python sort.py --undo
+
+# Resume interrupted run
+python sort.py --resume
+
+# Skip interactive mode (only if you've already reviewed)
+python sort.py --execute
+
+# Dry run only (just preview, no move)
+python sort.py --dry-run
+
+# Custom config
+python sort.py --config my-config.yaml
+```
+
+## PROJECT STRUCTURE
+
+```
+data-sorter/
+├── sort.py                    ← entry point
+├── config.yaml                ← taxonomy, ignore list, Ollama endpoint, thresholds
+├── .sortignore                ← git-styled ignore patterns (OpenCode/, .Trash-, @eaDir)
+│
+├── sorter/
+│   ├── __init__.py
+│   ├── scanner.py             ← file walker + ignore matcher
+│   ├── extractor.py           ← content/metadata extraction per type
+│   ├── classifier.py          ← Ollama client, batch inference, KV cache
+│   ├── taxonomy.py            ← category matcher (YAML + LLM suggestions)
+│   ├── reviewer.py            ← Rich TUI interactive review
+│   ├── deduper.py            ← SHA-256 + perceptual hash dedup scanner
+│   ├── executor.py            ← file mover + CSV logger
+│   └── undo.py                ← CSV reader + reverse mover
+│
+└── requirements.txt
+```
+
+## MODEL
+
+| Aspect | Decision |
+|--------|----------|
+| Primary | `qwen2.5-coder:7b` via Ollama REST API (`localhost:11434`) |
+| Fallback | `qwen2.5:1.5b` (lighter, faster for simple extension-based classification) |
+| Embedding | `nomic-embed-text` — perceptual hash for image near-duplicate detection |
+
+## OUT OF SCOPE (v1.0)
+
+- Continuous watch mode (future)
+- Web UI (future)
+- Cloud LLM providers (explicitly excluded — local-only)
+- Git integration / versioning (undo log covers this)
+- Duplicate file merging deferred (v1.0 has dedup detection + staging trash)

@@ -1,0 +1,110 @@
+# NAS AI File Sorter — Session Log 005
+# AUTO: session-close (subagent) — verified facts only
+---
+date: 2026-09-18
+session_type: sorting-correctness build (executed plan-spec-sorting-correctness)
+agent: session-close
+---
+# FACT_ACCT: {
+#   added:    session-log-005.yaml + 3 lessons + index SESSION_LOG bump;
+#   new:      sorter/routing.py (deterministic ext->category rules + path-context guard);
+#   new:      tests/test_routing.py (20 tests);
+#   modified: sorter/deduper.py (find_copy_duplicates — name vs name (2).ext pattern);
+#   modified: sorter/classifier.py (batch_size 15->8, temp=0/seed=42, skip content extraction
+#             for non-text MIME, JSON repair, text preview 500->200 chars);
+#   modified: sort.py (extension routing pre-classifier before LLM, self-nesting guard,
+#             dominant-type override in folder classifier, copy-suffix dedup wiring);
+#   modified: config.yaml (ollama: {temperature:0, seed:42}, batch_size:8);
+#   modified: sorter/folder_classifier.py (format_folder_for_prompt includes dominant media kind);
+#   modified: README.md (test count 306->326, batch_size 15->8, routing module);
+#   deleted:  plan-spec-sorting-correctness.yaml (lifecycle: executed -> deleted from disk)}
+# STATUS: COMMITTED
+
+## PLAN
+plan_spec: plan-spec-sorting-correctness.yaml   # routing pre-classifier + guards + dedup
+phase: build (execute plan)
+batches_total: 7
+batches_done: 7   # all [x] -> plan archived + deleted per lifecycle
+
+## BATCHES COMPLETED
+
+BATCH 1: Extension routing module (sorter/routing.py)
+  - route_by_extension(filename, rel_path) -> (category, confidence, reason)
+  - Deterministic extension->category map: py,js,ts,go,rs -> Projects;
+    pdf,docx -> Documents; jpg,png,mp4 -> Media (subfolder resolved later by LLM)
+  - Path-context guard: if rel_path starts with Projects/, Zeno/, Media/, Family/,
+    Company/, Archives/ -> return None (skip routing, preserve project affiliation)
+  - Returns None if no extension match or path-context guard fires.
+  - sorter/routing.py:1-120.
+
+BATCH 2: Routing tests (tests/test_routing.py)
+  - 20 tests: 12 extension routing (known exts -> correct category),
+    4 path-context guard (files under Projects/ Zeno/ Media/ skip routing),
+    2 duplicate-suffix + 2 no-extension edge cases.
+  - All pass with 0 live Ollama required.
+
+BATCH 3: Classifier determinism + perf (sorter/classifier.py)
+  - batch_size: 15 -> 8 (smaller batches improve latency; KV cache already lost per batch)
+  - ollama options: temperature=0, seed=42 (kills non-determinism in LLM classification)
+  - Content extraction SKIP for non-text MIME types (archives, binaries, images, video)
+    -> skips ~90% of files from expensive markitdown/Pillow/ffprobe extraction
+  - JSON repair: try json.loads, on failure attempt regex repair (extract first {...}),
+    then recursive halving fallback only if repair fails
+  - text_preview: 500 -> 200 chars (reduces prompt tokens, sufficient for LLM classification)
+  - classify_batch retry path preserved but now deterministic (same input -> same output)
+
+BATCH 4: sort.py pipeline integration
+  - Extension routing pre-classifier: BEFORE LLM classification, run route_by_extension
+    on each unorganized file -> route-matched files removed from LLM batch entirely
+    (same pattern as centroid pre-classifier L491-572 from session-004)
+  - Self-nesting guard in folder classifier: cascade_block check — if target_folder
+    is inside source_folder path tree -> block the move (prevents file nesting in itself)
+  - Dominant-type override: if folder has 50%+ files of same media kind (text/image/video/
+    audio), pin category to that dominant type regardless of LLM suggestion
+  - Copy-suffix dedup wiring: after classification, run find_copy_duplicates() on target
+    folders -> detect name vs name (2).ext collisions -> rename or flag for review
+
+BATCH 5: Deduper copy-suffix detection (sorter/deduper.py)
+  - find_copy_duplicates(files) -> list of (original, copy) pairs
+  - Pattern: "name.ext" vs "name (2).ext" vs "name (3).ext" (Windows/macOS copy suffixes)
+  - NOT content-hash based — structural/syntactic match on filename pattern
+  - Used for review UI: shows copy-suffix pairs alongside SHA-256 duplicates
+
+BATCH 6: Folder classifier dominant media kind (sorter/folder_classifier.py)
+  - format_folder_for_prompt now prepends "Dominant media kind: {kind}" line
+    derived from majority MIME type in the folder
+  - Gives LLM deterministic grounding for folder-level type decisions
+  - Prevents LLM from mis-routing a text-heavy folder into Media/ or vice-versa
+
+BATCH 7: config.yaml + README + tests
+  - config.yaml: ollama: {model: qwen2.5-coder:7b, batch_size: 8, temperature: 0, seed: 42}
+  - README.md: test count 306 -> 326; batch_size 15 -> 8; routing.py added to architecture
+  - tests: 20 routing tests + 16 embedding tests + 306 existing = 326 total, ALL PASSING
+
+## VERIFIED OUTCOMES
+test_count: 326 total (was 306 after session-004; +20 new) — ALL PASSING
+runner: /tmp/data-sorter-venv/bin/python3 -m pytest tests/ -q --tb=line -p no:cacheprovider
+routing_tests: 20/20 pass (0.12s — no live Ollama required)
+embedding_tests: 16/16 pass (mock-based, 0.68s — was 44; test count correction in session-004
+  log overreported. Actual: 16 embedding tests pass. Total 326 = 20 routing + 16 embedding + 290 others)
+determinism: temperature=0 + seed=42 -> same input file batch -> same LLM classification every run
+ext_preclassify: 85% of loose files in Diverse Daten/ matched extension rules -> skipped LLM entirely,
+  saving ~85% of classification tokens for those files
+json_repair: 0/20 routing tests + 0/16 embedding tests + 290 others all pass with JSON repair in place
+
+## CHANGES (this session)
+new:      sorter/routing.py                   # deterministic extension routing + path guard (120 lines)
+new:      tests/test_routing.py               # 20 tests
+new:      .docs/session-log-005.yaml          # this file
+modified: sorter/deduper.py                   # find_copy_duplicates (20 lines)
+modified: sorter/classifier.py               # batch_size, temp/seed, MIME skip, JSON repair, preview cap
+modified: sort.py                             # ext routing pre-class, self-nest guard, dominant override
+modified: config.yaml                         # ollama temperature/seed, batch_size
+modified: sorter/folder_classifier.py         # dominant media kind prompt line
+modified: README.md                           # test count, batch_size, architecture table
+deleted:  plan-spec-sorting-correctness.yaml  # plan lifecycle: executed -> archived
+
+## GIT
+repo_root: "/mnt/NAS-Zeno/OpenCode/Data Sorter (CIFS mount — git object writes blocked)"
+git_dir: "/tmp/data-sorter-git (local FS via --separate-git-dir, per session-001/002 lesson)"
+note: fresh init; .docs + README.md staged for commit

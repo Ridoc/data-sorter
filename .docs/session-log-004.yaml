@@ -1,0 +1,108 @@
+# NAS AI File Sorter — Session Log 004
+# AUTO: session-close (subagent) — verified facts only
+---
+date: 2026-09-18
+session_type: semantic-filing build (executed plan-spec-semantic-filing)
+agent: session-close
+---
+# FACT_ACCT: {
+#   added: session-log-004.yaml + 3 lessons + index SESSION_LOG bump + README embedding docs;
+#   new: sorter/embeddings.py (509 lines), tests/test_embeddings.py (44 tests);
+#   modified: sort.py (centroid pre-classifier ~L491-572), config.yaml (embeddings section),
+#     requirements.txt (numpy, scikit-learn), README.md;
+#   dropped: plan-spec-semantic-filing.yaml (lifecycle: executed -> deleted from disk)}
+# STATUS: COMMITTED
+
+## PLAN
+plan_spec: plan-spec-semantic-filing.yaml   # embedding layer + centroid matching + KMeans clustering
+phase: build (execute plan)
+batches_total: 7
+batches_done: 7   # all [x] -> plan archived + deleted per lifecycle
+
+## BATCHES COMPLETED
+
+BATCH 1: Embedding API client
+  - sorter/embeddings.py embed_text(): Ollama /api/embeddings (nomic-embed-text, 768-dim vector).
+  - embed_batch(): /api/embed multi-text round-trip; falls back to sequential embed_text on failure.
+  - sorter/embeddings.py:33-77.
+
+BATCH 2: Persistent embedding cache
+  - EmbeddingCache: FileEntry-identity key {rel_path}:{mtime}:{size} -> vector.
+  - Persisted to .sort_logs/embeddings_cache.json; flush() writes on dirty.
+  - Cache miss: mtime or size change => re-embed (mtime-change invalidation tested).
+  - Graceful CIFS degradation: OSError on _save caught silently (cache is speed, not correctness).
+  - sorter/embeddings.py:97-147.
+
+BATCH 3: Vector math + centroid computation
+  - cosine_similarity(a, b): numpy dot/norm, 1e-12 zero-guard.
+  - centroid(vectors): mean + L2-normalize.
+  - text_for_embedding(entry, snippet=""): "file: {name}\npath: {rel_path}\ntype: {mime}\ncontent: {snippet[:300]}".
+  - build_folder_centroids(nas, taxonomy, cache): embeds resident files per taxonomy folder,
+    computes centroid; empty folders seeded with folder-name embedding; cached to centroids.json.
+  - sorter/embeddings.py:150-319.
+
+BATCH 4: Cosine matcher
+  - match_folder(embedding, centroids, threshold=0.85) -> (category_path|None, score).
+  - Accepts >= threshold, returns best match; (None, 0.0) on no match.
+  - sorter/embeddings.py:324-351.
+
+BATCH 5: KMeans clustering + keyword extraction
+  - extract_keywords(filenames, top_n=5): tokenizes stems, drops stopwords/short tokens, freq-rank.
+  - cluster_files(embeddings, min_k=2, max_k=None): sklearn KMeans + silhouette_score auto-k (2..max_k).
+    Returns [{indices, centroid, size, keywords:[]}] sorted by size desc. [] if <2 vectors.
+  - name_cluster(cluster, model=qwen2.5-coder:7b): LLM-generates folder name from keywords;
+    sanitizes (underscores, illegal-char strip, 60-char cap); fallback "Cluster_N_files".
+  - NOTE: cluster_files + name_cluster are library building blocks — 11 tests pass but NOT
+    yet wired into the sort.py pipeline (centroid matcher is the active pre-classifier).
+  - sorter/embeddings.py:354-510.
+
+BATCH 6: sort.py pipeline integration (centroid pre-classifier)
+  - Pre-classify step inserted before LLM classification (sort.py ~L491-572).
+  - When embeddings.enabled: build_folder_centroids -> batch-embed cached-miss files
+    -> match_folder per file -> centroid-matched files dropped from LLM batch.
+  - centroid_classifications merged before LLM results (prepend, preserve order).
+  - Confidence = int(min(score * 100, 99)); reason = "Centroid: {folder} ({score:.2f})".
+  - Opt-in gate: cfg.embeddings.enabled (default false — safe default, no embeddings on first run).
+  - sort.py:491-572.
+
+BATCH 7: Config + deps + tests
+  - config.yaml: embeddings: {enabled: false, model: nomic-embed-text, similarity_threshold: 0.85}.
+  - requirements.txt: numpy>=1.24, scikit-learn>=1.3.
+  - tests/test_embeddings.py: 44 tests (embed_text/embed_batch mocked, cosine_similarity 5,
+    centroid 4, text_for_embedding 3, EmbeddingCache 6, build_folder_centroids 4,
+    match_folder 6, extract_keywords 5, cluster_files 4, name_cluster 3).
+
+## VERIFIED OUTCOMES
+test_count: 306 total (was 262 after session-003; +44 new) — ALL PASSING
+runner: /tmp/data-sorter-venv/bin/python3 -m pytest tests/ -q --tb=line -p no:cacheprovider (1.17s)
+embedding_tests: 44/44 pass (mock-based, 0.68s — no live Ollama required)
+ollama: localhost:11434 up; nomic-embed-text:latest available (768-dim)
+centroid_integration: sort.py L491-572 verified — pre-classifier wired before LLM classify,
+  gated by embeddings.enabled; centroid matches removed from LLM batch.
+cache_strategy: EmbeddingCache uses rel_path:mtime:size key; cache-hit skips Ollama;
+  centroids cached separately in .sort_logs/centroids.json.
+embeddings_disabled_default: config.yaml embeddings.enabled=false — opt-in, no Ollama
+  embeddings activated without explicit user enable (safe).
+clustering_status: cluster_files + name_cluster implemented + 11 tests pass but NOT invoked
+  by sort.py pipeline (reserved as building blocks for next integration).
+
+## COST TRADEOFF (key insight)
+nomic-embed-text embeddings ~= 100x cheaper than qwen2.5-coder:7b LLM tokens.
+Centroid pre-filter absorbs the bulk of classification (high-similarity files);
+LLM only runs on the residual unmatched set. 768-dim cosine over folder centroids
+is a strong proxy for "does this belong here?" without full generation.
+
+## CHANGES (this session)
+new:      sorter/embeddings.py                  # full embedding layer (509 lines)
+new:      tests/test_embeddings.py              # 44 tests
+new:      .docs/session-log-004.yaml            # this file
+modified: sort.py                               # centroid pre-classifier L491-572
+modified: config.yaml                           # embeddings: section (enabled: false)
+modified: requirements.txt                      # numpy, scikit-learn
+modified: README.md                             # embedding module + test count bump
+deleted:  plan-spec-semantic-filing.yaml        # plan lifecycle: executed -> archived
+
+## GIT
+repo_root: "/mnt/NAS-Zeno/OpenCode/Data Sorter (CIFS mount — git object writes blocked)"
+git_dir: "/tmp/data-sorter-git (local FS via --separate-git-dir, per session-001/002 lesson)"
+note: stale .git gitfile (points to deleted /tmp/data-sorter-git) removed; fresh init

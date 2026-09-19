@@ -1,0 +1,95 @@
+# NAS AI File Sorter — Session Log 001
+# AUTO: session-close (subagent) — verified facts only
+---
+date: 2026-09-17
+session_type: project-initialization + implementation (first commit)
+agent: session-close
+---
+# FACT_ACCT: {added: 1 file + 1 lessons + index update}
+# STATUS: COMMITTED (initial repo commit)
+
+## GOAL
+Bootstrap NAS AI File Sorter: scan /mnt/NAS-Zeno via local Ollama, classify,
+interactive Rich/Questionary TUI review, move with CSV undo log.
+
+## KEY DECISIONS
+taxonomy:
+  structure: person-first (Zeno / Family / Company / Projects / Media / Archives)
+  promotions:
+    - "5 Circles promoted from Projects -> Company/ top-level"
+  relocations:
+    - "ERGO Paphos moved from Company -> Projects (Emily's work)"
+  dissolutions:
+    - "OS files (#OS USER FILES/*) dissolved into Zeno/ subfolders"
+  hybrid: "pre-defined taxonomy + LLM may propose new subfolders (best top-level)"
+  fallback: "_Unsorted_Review for low-confidence (<50) items"
+dedup:
+  exact: "SHA-256 content hash — flag duplicate paths"
+  near_image: "perceptual hash (imagehash + Pillow) — resized/recompressed photos"
+  delete_mode: "move to Archives/_Duplicates_Delete/ staging trash, NEVER hard-delete"
+  keep_pref: "keep newest mtime, flag older copy"
+  order: "dedup pass runs AFTER classification (scans target folders)"
+  review: "dedup pairs shown in TUI alongside classification results"
+safety:
+  dry_run: "MANDATORY — no file moved without user preview"
+  undo_log: "CSV per move: timestamp,original_path,target_path,confidence,file_hash"
+  undo_cmd: "sort.py --undo reads CSV, reverts moves (hash verified vs collision)"
+tui:
+  engine: "rich + questionary"
+  confidence_colors:
+    green: "conf >= 85 — auto-accepted, shown for info"
+    yellow: "conf 50-85 — user accept/modify/reject"
+    red: "conf < 50 — queued for _Unsorted_Review unless override"
+ollama:
+  primary: "qwen2.5-coder:7b via Ollama REST (localhost:11434), ROCm RX 6800 XT"
+  fallback: "qwen2.5:1.5b — extension-based simple classification"
+  prompt: "fixed template (string) for KV cache reuse via batch inference"
+  batch: "10-20 files per request — reuse KV cache on repeated system prompt"
+extraction:
+  parallel: "ThreadPoolExecutor (I/O bound) for content extraction"
+  per_type:
+    pdf/docx/xlsx/pptx: markitdown (full text)
+    jpg/png/heic: Pillow + exiftool (EXIF date/GPS/camera)
+    mp4/mov/avi/wmv/mkv: ffprobe (creation date/codec/duration/resolution)
+    mp3/wav/flask: ffprobe (artist/album/duration)
+    txt/code: read first 2KB (shebang/hints)
+    binary/unknown: stat only (size/date/extension)
+scanner:
+  walk: "os.walk recursive"
+  ignore: ".sortignore patterns + defaults (.git, .Trash-*, #recycle, @eaDir, Thumbs.db, .DS_Store, OpenCode/)"
+  detect: "python-magic MIME, extension fallback"
+  depth: "configurable max-depth (default unlimited)"
+premiere_temp: "Auto-Save / PRV files flagged DELETE (safe; regenerate on demand)"
+
+## CLI SURFACE (from README/plan)
+  python sort.py            # full: dry preview -> confirm -> execute
+  sort.py --undo            # revert last run (hash-verified)
+  sort.py --resume          # resume interrupted run
+  sort.py --execute         # skip interactive (post-review)
+  sort.py --dry-run         # preview only
+  sort.py --config X.yaml   # custom taxonomy/ignore
+
+## TEST STATS (VERIFIED)
+  total: 193
+  passing: 183
+  failing: 10
+  failure_root_cause: all 10 are ENVIRONMENTAL (missing optional deps), NOT logic
+    - questionary MISSING -> 7 failures (test_reviewer TUI flow)
+    - python-magic MISSING -> 2 failures (test_scanner TestGetMime)
+    - imagehash MISSING -> 1 failure (test_deduper test_image_near_dup assert 0==1)
+  note: "deps ARE in requirements.txt (rich, questionary, pyyaml, requests, markitdown,
+    Pillow, python-magic, imagehash); sandbox just never ran pip install.
+    Full green expected once: pip install -r requirements.txt."
+  runner: "python3 -m pytest tests/ -q (PYTHONPATH=.)"
+
+## GIT STRATEGY
+  repo_root: "/mnt/NAS-Zeno/OpenCode/Data Sorter (CIFS mount, NO git op support)"
+  git_dir: "/tmp/data-sorter-git (local FS — separate git dir via --separate-git-dir)"
+  reason: "CIFS mount rejects git object writes; separate local git-dir absorbs commi"
+  stage: "all project files + .docs staged in /tmp/data-sorter-git index"
+
+## ARTIFACTS
+  design_doc: ".docs/2026-09-17-nas-file-sorter-design.yaml (pre-existing, v1.0)"
+  config: "config.yaml + examples/config.example.yaml + .sortignore"
+  source: "sort.py (entry) + sorter/{scanner,extractor,classifier,taxonomy,reviewer,deduper,executor,undo}.py"
+  tests: "tests/test_*.py (9 files, 193 cases)"

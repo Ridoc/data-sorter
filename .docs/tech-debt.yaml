@@ -1,0 +1,41 @@
+# NAS AI File Sorter — Tech Debt (OPEN items only)
+# AUTO: session-close (subagent) — reconciled every session end
+STATUS: OPEN
+ENTRIES:
+  - id: retry-attempts-not-wired
+    description: >
+      retry_attempts: int = 2 is an OllamaClient constructor default
+      (sorter/classifier.py:58) but is NOT present in config.yaml — from_config
+      (classifier.py:298-314) omits it, so the default is always used — and is NOT
+      referenced in classify_batch's retry path. On JSON parse failure classify_batch
+      calls _retry_with_smaller_batches (recursive halving) with no retry_attempts-
+      limited loop, so the param is effectively dead config.
+    location: "sorter/classifier.py:58,67,98-102"
+    status: open
+    confidence: verified
+    session: nas-file-sorter-002
+
+  - id: folder-move-confirm-gate-no-integration-test
+    description: >
+      Folder-move confirmation gate (sort.py:578) prompts via stdin for accept/reject
+      per folder move before mutation — no integration test mocks stdin to verify the
+      index-parsing flow ('1 3' | 'all' | 'none') against the gate.
+    location: "sort.py:574-607"
+    status: open
+    confidence: verified
+    session: nas-file-sorter-002
+
+  - id: design-routing-not-verified-live
+    description: >
+      The subject-first prompt rules + Design taxonomy (content-understanding plan,
+      session-007) were NOT verified via live Ollama dry-run on real design folders
+      (no live LLM in build environment). Integration tests confirm the taxonomy
+      surface (Design in Zeno children + YAML string), and determinism is established
+      via prior sessions (temperature=0, seed=42), but end-to-end LLM routing of
+      design imagery to Zeno/Documents/Design has not been observed on real data.
+    location: "config.yaml:44, sort.py:133-137, sorter/classifier.py:94-98, sorter/folder_classifier.py:299"
+    status: open
+    confidence: medium
+    session: content-understanding
+    note: "Pending live Ollama verification on Diverse Daten/Ausbildung (Entwürfte Logo) +
+      Diverse Daten/EVE subset (BO Logo, Grafiken, Grafik für Videos)."

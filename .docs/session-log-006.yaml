@@ -1,0 +1,110 @@
+# NAS AI File Sorter — Session Log 006
+# AUTO: session-close (subagent) — verified facts only
+---
+date: 2026-09-18
+session_type: folder-context-preservation build (executed plan-spec-folder-context-preservation)
+agent: session-close
+---
+# FACT_ACCT: {
+#   added:    session-log-006.yaml + 3 lessons + index SESSION_LOG bump + README test-count bump;
+#   new:      sorter/routing.py delete-protection set (_DELETE_PROTECTED_EXT) + should_protect_from_delete();
+#   modified: sorter/folder_classifier.py (added _is_junk_segment, meaningful_ancestors, rewrote resolve_folder_move);
+#   modified: sorter/routing.py (3D model exts + dictation exts + .pps ext + delete protection);
+#   modified: sorter/taxonomy.py (case-normalize child category segment);
+#   modified: sort.py (child-segment case-normalization in folder pipeline + delete-protection guard + folder count display fix);
+#   modified: config.yaml (Videos added to Media children);
+#   modified: tests/test_folder_classifier.py (+9 meaningful_ancestors tests);
+#   modified: tests/test_routing.py (+5 tests: 3D routing + delete protection);
+#   modified: tests/test_taxonomy.py (+2 tests: case normalization);
+#   modified: README.md (test count 326->342, 3D routing + delete protection to architecture);
+#   deleted:  plan-spec-folder-context-preservation.yaml (lifecycle: executed -> deleted from disk)}
+# STATUS: COMMITTED
+
+## PLAN
+plan_spec: plan-spec-folder-context-preservation.yaml   # folder context + delete protection + case normalization
+phase: build (execute plan)
+batches_total: 3
+batches_done: 3   # all [x] -> plan archived + deleted per lifecycle
+
+## BATCHES COMPLETED
+
+BATCH 1: Folded-ancestors context preservation (sorter/folder_classifier.py + tests)
+  - _is_junk_segment(name): drops junk path segments from ancestor context — temp dirs,
+    system markers (._-), len<=2, old_* prefix. Does NOT filter by _dir_has_meaningful_name
+    (short names like "EVE" are legitimate ancestor context).
+  - meaningful_ancestors(rel_path, leaf_name, scan_root): extracts meaningful ancestor
+    segments from a folder's relative path, dropping junk + scan_root + leaf.
+    Example: "Diverse Daten/EVE/-Y-/old_G_files/bilder&screens"
+      -> ['EVE']  (scan_root="Diverse Daten", leaf="bilder&screens")
+  - resolve_folder_move() rewrite:
+    (a) Includes meaningful ancestors in target path: cat_path/ancestors/leaf
+        e.g. EVE/.../bilder&screens -> Media/Photos/EVE/bilder&screens
+    (b) Normalized name comparison: underscore=space, case-insensitive, hyphen=space
+        prevents double-append when LLM already includes leaf name
+        e.g. SQ_Tutorials vs SQ Tutorials -> match, no double-append
+  - Tests: 9 new in TestMeaningfulAncestors (eve_example, school_path, no_scan_root,
+    no_ancestors, all_junk, single_meaningful, multiple_segments, eve_simple,
+    short_segments_removed). All pass.
+  - sorter/folder_classifier.py:37-99, 215-261.
+
+BATCH 2: Delete protection + 3D/dictation routing (sorter/routing.py + tests)
+  - _DELETE_PROTECTED_EXT: set of extensions that are ALWAYS user content — never
+    safe to auto-delete. Includes 3D models (.skp, .skb, .dwg, .dxf, .3ds, .blend,
+    .obj, .fbx, .max, .c4d, .stl, .step, .iges) + design/image sources (.psd,
+    .pspimage, .xcf, .ai, .psp, .svg, .bmp, .tiff, .png, .jpg/.jpeg, .gif, .mp3, etc.).
+  - should_protect_from_delete(filepath): returns True if file's extension is in
+    _DELETE_PROTECTED_EXT (case-insensitive). Temp/generated files (.tmp, .exe, .msi,
+    .rar, .db) return False.
+  - route_by_extension new extensions:
+    - .dss, .nri, .mcx -> Media/Music (dictation/audio formats)
+    - .skp, .skb, .dwg, .dxf, .3ds, .blend, .obj, .fbx, .max, .c4d -> Zeno/Documents/Design
+    - .pps -> Zeno/Documents
+  - Tests: 5 new (Test3DRouting: 2, TestDeleteProtection: 3). All pass.
+  - sorter/routing.py:67-84, 172-177 (delete protection set + function).
+
+BATCH 3: Taxonomy case normalization + pipeline wiring (sorter/taxonomy.py + sort.py + config.yaml + tests)
+  - taxonomy.py resolve_category(): case-normalize second-level child segment.
+    LLM returns "Media/videos" but taxonomy has "Media/Videos" -> canonicalized to
+    avoid creating duplicate subfolders. Genuinely unknown children still is_new=True.
+  - sort.py: same child-segment case-normalization applied in folder-classification
+    pipeline (before resolve_folder_move). resolve_category now receives load_taxonomy()
+    dict instead of raw config_path string.
+  - sort.py delete-protection guard: after classification, files/folders flagged
+    "delete" are checked — if 50%+ children are protected types (folder) or file ext
+    is protected (file-level), action rerouted to "move" -> Archives/Old_Projects
+    with confidence capped at 85 and reason annotated "[Delete-guard: user content → archive]".
+  - sort.py folder count display: folders no longer double-listed in cat_counts
+    (shown in dedicated folder-moves table instead).
+  - config.yaml: "Videos" added to Media children list.
+  - Tests: 2 new in test_taxonomy.py (test_case_normalized_media_child,
+    test_case_normalized_unknown_child_stays_new). All pass.
+  - sorter/taxonomy.py:62-72. sort.py:556-575, 595-729. config.yaml:62.
+
+## VERIFIED OUTCOMES
+test_count: 342 total (was 326 after session-005; +16 new) — ALL PASSING
+runner: /tmp/data-sorter-venv/bin/python3 -m pytest tests/ -q --tb=line -p no:cacheprovider
+new_tests: 16/16 pass (9 folder_classifier + 5 routing + 2 taxonomy — all mock-based, 0 live Ollama required)
+ancestor_context: EVE/-Y-/old_G_files/bilder&screens -> Media/Photos/EVE/bilder&screens
+  (was: Media/Photos/bilder&screens — lost EVE context, risk of collision/orphan)
+double_append_fix: SQ_Tutorials vs SQ Tutorials normalized (underscore=space, case-insensitive) -> no double-append
+case_normalization: Media/videos -> Media/Videos (canonical, no duplicate subfolder)
+delete_guard: 3D models (.skp, .blend, .obj, etc.) + design sources (.psd, .xcf) + media
+  (.jpg, .mp3) + documents (.pdf) protected from auto-delete -> rerouted to Archives/Old_Projects
+
+## CHANGES (this session)
+new:      .docs/session-log-006.yaml            # this file
+modified: sorter/folder_classifier.py           # _is_junk_segment, meaningful_ancestors, resolve_folder_move rewrite
+modified: sorter/routing.py                     # 3D/dictation extensions + delete protection
+modified: sorter/taxonomy.py                    # case-normalized child category
+modified: sort.py                               # child normalization + delete-guard + folder count display
+modified: config.yaml                           # Videos -> Media children
+modified: tests/test_folder_classifier.py       # +9 meaningful_ancestors tests
+modified: tests/test_routing.py                 # +5 tests (3D routing + delete protection)
+modified: tests/test_taxonomy.py                # +2 tests (case normalization)
+modified: README.md                             # test count 326->342, architecture table
+deleted:  plan-spec-folder-context-preservation.yaml   # plan lifecycle: executed -> archived
+
+## GIT
+repo_root: "/mnt/NAS-Zeno/OpenCode/Data Sorter (CIFS mount — git object writes blocked)"
+git_dir: "/tmp/data-sorter-git (local FS via --separate-git-dir, per session-001/002 lesson)"
+note: fresh init; .docs + README.md staged for commit
