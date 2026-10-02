@@ -1,0 +1,14 @@
+# Directories to skip entirely
+OpenCode/
+.git/
+.Trash-*
+#recycle
+@eaDir
+
+# Files to skip
+Thumbs.db
+.DS_Store
+.desktop.ini
+*.pyc
+__pycache__/
+.sort_logs/

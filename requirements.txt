@@ -1,0 +1,10 @@
+rich>=13.0
+questionary>=2.0
+pyyaml>=6.0
+requests>=2.31
+markitdown>=0.1
+Pillow>=10.0
+python-magic>=0.4
+imagehash>=4.3
+numpy>=1.24
+scikit-learn>=1.3

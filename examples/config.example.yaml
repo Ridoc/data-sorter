@@ -1,0 +1,70 @@
+# NAS File Sorter — Example Configuration
+# Copy to config.yaml and customize for your NAS
+
+ollama:
+  endpoint: "http://localhost:11434"   # Ollama server address
+  model: "qwen2.5-coder:7b"           # LLM for classification (change to any Ollama model)
+  fallback_model: "qwen2.5:1.5b"      # Lighter fallback model
+  timeout: 60                          # seconds per request
+  batch_size: 15                       # files per Ollama request (KV cache reuse > larger = faster)
+
+nas:
+  root: "/mnt/NAS-Zeno/"              # Mount point of your NAS
+  max_depth: null                      # null = unlimited, or set to e.g. 10
+
+confidence:
+  auto_accept: 85                      # 🟢 green — auto-accepted (dim display)
+  require_review: 50                   # 🟡 yellow — user must review
+
+taxonomy:
+  top_level:
+    - Zeno
+    - Family
+    - Company
+    - Projects
+    - Media
+    - Archives
+    - _Unsorted_Review
+
+  categories:
+    Zeno:
+      - Documents
+      - Downloads
+      - Bilder
+      - Videos
+      - Finances
+      - Career
+      - Health_Research
+      - Phone_Backups
+      - Obsidian_Vault
+    Family:
+      - Mom
+      - Andreas
+      - Emily
+    Company:
+      - 5_Circles
+    Projects:
+      - ERGO_Paphos
+      - FC_Squad
+      - GameClanFinder
+      - Websites
+      - Video_Projects
+    Media:
+      - DJ_Stuff
+      - Music
+      - Photos
+    Archives:
+      - Old_Projects
+      - System
+      - _Duplicates_Delete
+
+dedup:
+  enabled: true
+  exact_hash: true          # SHA-256 exact duplicate detection
+  image_phash: true         # Perceptual hash for near-identical images
+  keep_newest: true         # Keep file with latest modification time
+  trash_dir: "_Duplicates_Delete"  # Staging folder under Archives/
+
+logging:
+  csv_dir: ".sort_logs"     # Directory for undo logs (relative to NAS root)
+  undo_csv: "sort_undo.csv" # CSV filename
