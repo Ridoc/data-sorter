@@ -214,3 +214,30 @@ class TestMeaningfulAncestors:
         """ScanTop/a/xy/leaf -> [ScanTop] (a, xy junked, no scan_root to drop)"""
         result = meaningful_ancestors("ScanTop/a/xy/leaf", "leaf")
         assert result == ["ScanTop"]
+
+# ── design-routing-fix ──
+
+from sorter.folder_classifier import make_review_move
+
+
+def test_make_review_move_keeps_folder_as_unit(tmp_path):
+    entry = {"path": "Diverse Daten/Referat", "file_count": 17, "total_size": 4096,
+             "children": ["Diverse Daten/Referat/a.htm", "Diverse Daten/Referat/b.htm"]}
+    mv = make_review_move(entry, tmp_path)
+    assert mv["is_folder"] is True
+    assert mv["source"] == str(tmp_path / "Diverse Daten/Referat")
+    assert mv["target"] == str(tmp_path / "_Unsorted_Review" / "Referat")
+    assert mv["confidence"] == 0
+    assert mv["file_count"] == 17
+    assert mv["_children"] == entry["children"]
+    assert "review as unit" in mv["reason"]
+
+
+def test_format_folder_prompt_has_subject_and_ten_samples():
+    entry = {"path": "A/Entwürfe Logo", "file_count": 12, "total_size": 10,
+             "top_extensions": {".png": 12},
+             "sample_files": [f"f{i}.png" for i in range(12)],
+             "age_classification": "recent"}
+    out = format_folder_for_prompt(entry)
+    assert "Subject: Entwürfe Logo" in out
+    assert "f9.png" in out and "f10.png" not in out

@@ -170,3 +170,279 @@ class TestDeleteProtection:
     def test_case_insensitive(self):
         assert should_protect_from_delete("MODEL.SKP") is True
         assert should_protect_from_delete("photo.JPG") is True
+
+# ── design-routing-fix: dominant-type override is an LLM-failure fallback only ──
+
+import json
+
+
+def _folder_entry(path, exts):
+    name = path.split("/")[-1]
+    return {
+        "path": path, "is_folder": True, "file_count": sum(exts.values()),
+        "total_size": 1000, "mime_types": [], "top_extensions": exts,
+        "sample_files": [f"{name}_{i}.png" for i in range(3)],
+        "children": [f"{path}/{name}_{i}.png" for i in range(3)],
+        "age_classification": "recent",
+    }
+
+
+@pytest.fixture
+def classify(monkeypatch):
+    """Run the real _classify_folders with a stubbed LLM; returns (fn, prompts)."""
+    from sorter.classifier import OllamaClient
+    import sort as sort_mod
+
+    prompts = []
+
+    def run(entry, llm_result=None, raises=False):
+        def fake_call(self, prompt):
+            prompts.append(prompt)
+            if raises:
+                raise RuntimeError("llm down")
+            return json.dumps([dict(llm_result, path=entry["path"], is_folder=True)])
+        monkeypatch.setattr(OllamaClient, "_call_ollama", fake_call)
+        return sort_mod._classify_folders(
+            [entry], Path("config.yaml"), {"ollama": {"batch_size": 15}}, "taxonomy"
+        )[0]
+
+    return run, prompts
+
+
+class TestDominantOverrideIsFallbackOnly:
+    IMG = {".png": 9}
+
+    def test_confident_llm_design_not_flipped_to_photos(self, classify):
+        run, _ = classify
+        r = run(_folder_entry("Schule/Entwürfe Logo", self.IMG),
+                {"category_path": "Zeno/Documents/Design/Entwürfe Logo",
+                 "confidence": 90, "reason": "logo drafts"})
+        assert r["category_path"] == "Zeno/Documents/Design/Entwürfe Logo"
+        assert "[Det" not in r["reason"]
+
+    def test_low_confidence_llm_verdict_respected(self, classify):
+        run, _ = classify
+        r = run(_folder_entry("Scans/Zeugnisse", self.IMG),
+                {"category_path": "Zeno/Documents", "confidence": 60, "reason": "scans"})
+        assert r["category_path"] == "Zeno/Documents"
+        assert r["confidence"] == 60
+
+    def test_unsorted_result_falls_back_to_dominant_kind(self, classify):
+        run, _ = classify
+        r = run(_folder_entry("X/Pics", self.IMG),
+                {"category_path": "_Unsorted_Review", "confidence": 0, "reason": "?"})
+        assert r["category_path"] == "Media/Photos"
+        assert "Det fallback" in r["reason"]
+
+    def test_llm_exception_falls_back_to_dominant_kind(self, classify):
+        run, _ = classify
+        r = run(_folder_entry("X/Pics", self.IMG), raises=True)
+        assert r["category_path"] == "Media/Photos"
+
+    def test_no_dominant_kind_stays_unsorted(self, classify):
+        run, _ = classify
+        r = run(_folder_entry("X/Mixed", {".png": 3, ".mp3": 3, ".pdf": 3}),
+                {"category_path": "_Unsorted_Review", "confidence": 0, "reason": "?"})
+        assert r["category_path"] == "_Unsorted_Review"
+
+
+class TestFolderPromptRules:
+    def test_folder_prompt_has_design_and_subject_rules(self, classify):
+        run, prompts = classify
+        run(_folder_entry("A/Banner", {".png": 5}),
+            {"category_path": "Zeno/Documents/Design/Banner", "confidence": 90, "reason": "x"})
+        p = prompts[0]
+        assert "SUBJECT first" in p
+        assert "design assets" in p
+        assert "Zeno/Documents/Design" in p
+        assert "never a" in p and "top-level Zeno/Design" in p
+        assert "Subject: Banner" in p
+
+
+class TestResultOrderMatchesInput:
+    """LLM returns results in arbitrary order; callers zip positionally."""
+
+    def test_out_of_order_results_rekeyed_to_input_order(self, monkeypatch):
+        import sort as sort_mod
+        from sorter.classifier import OllamaClient
+
+        entries = [
+            _folder_entry("D/Rammstein 2010", {".jpg": 20}),
+            _folder_entry("D/Sunset Villa", {".jpg": 5}),
+            _folder_entry("D/Katzen", {".jpg": 9}),
+        ]
+        # LLM answers in reverse order, each with a *correct* category
+        answers = [
+            {"path": "D/Katzen", "category_path": "Media/Photos/Katzen", "confidence": 85, "reason": "cats"},
+            {"path": "D/Sunset Villa", "category_path": "Zeno/Documents/Sunset Villa", "confidence": 85, "reason": "house"},
+            {"path": "D/Rammstein 2010", "category_path": "Media/Photos/Rammstein 2010", "confidence": 85, "reason": "concert"},
+        ]
+        monkeypatch.setattr(
+            OllamaClient, "_call_ollama",
+            lambda self, prompt: json.dumps(answers),
+        )
+        out = sort_mod._classify_folders(entries, Path("config.yaml"),
+                                         {"ollama": {"batch_size": 15}}, "tax")
+        assert [r["path"] for r in out] == [e["path"] for e in entries]
+        assert out[0]["category_path"] == "Media/Photos/Rammstein 2010"
+        assert out[1]["category_path"] == "Zeno/Documents/Sunset Villa"
+        assert out[2]["category_path"] == "Media/Photos/Katzen"
+
+    def test_missing_result_uses_fallback_not_positional_mixup(self, monkeypatch):
+        import sort as sort_mod
+        from sorter.classifier import OllamaClient
+
+        entries = [_folder_entry("D/A", {".jpg": 3}), _folder_entry("D/B", {".jpg": 3})]
+        monkeypatch.setattr(
+            OllamaClient, "_call_ollama",
+            lambda self, prompt: json.dumps([
+                {"path": "D/A", "category_path": "Media/Photos/A", "confidence": 85, "reason": "x"}]),
+        )
+        out = sort_mod._classify_folders(entries, Path("config.yaml"),
+                                         {"ollama": {"batch_size": 15}}, "tax")
+        assert [r["path"] for r in out] == ["D/A", "D/B"]
+        # B was never answered for (retry also unanswered) -> deterministic fallback
+        assert out[1]["category_path"] == "Media/Photos"
+        assert "Det fallback" in out[1]["reason"]
+
+    def test_unanswered_without_dominant_kind_stays_review(self, monkeypatch):
+        import sort as sort_mod
+        from sorter.classifier import OllamaClient
+
+        entries = [_folder_entry("D/Mixed", {".png": 3, ".mp3": 3, ".pdf": 3})]
+        monkeypatch.setattr(OllamaClient, "_call_ollama", lambda self, prompt: "[]")
+        out = sort_mod._classify_folders(entries, Path("config.yaml"),
+                                         {"ollama": {"batch_size": 15}}, "tax")
+        assert out[0]["category_path"] == "_Unsorted_Review"
+        assert out[0]["confidence"] == 0
+
+
+class TestOmittedFoldersRetried:
+    """LLM drops folders from big batches; they get one focused retry."""
+
+    def test_dropped_folder_is_retried_not_reviewed(self, monkeypatch):
+        import sort as sort_mod
+        from sorter.classifier import OllamaClient
+
+        entries = [_folder_entry(f"D/F{i}", {".png": 4}) for i in range(4)]
+        calls = {"n": 0}
+
+        def fake_call(self, prompt):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                # answer only the first two of four
+                return json.dumps([
+                    {"path": "D/F0", "category_path": "Media/Photos/F0", "confidence": 85, "reason": "a"},
+                    {"path": "D/F1", "category_path": "Media/Photos/F1", "confidence": 85, "reason": "b"},
+                ])
+            assert "D/F2" in prompt and "D/F3" in prompt
+            return json.dumps([
+                {"path": "D/F2", "category_path": "Zeno/Documents/Design/F2", "confidence": 85, "reason": "c"},
+                {"path": "D/F3", "category_path": "Zeno/Documents/Design/F3", "confidence": 85, "reason": "d"},
+            ])
+
+        monkeypatch.setattr(OllamaClient, "_call_ollama", fake_call)
+        out = sort_mod._classify_folders(entries, Path("config.yaml"),
+                                         {"ollama": {"batch_size": 15}}, "tax")
+        assert calls["n"] == 2
+        assert [r["path"] for r in out] == ["D/F0", "D/F1", "D/F2", "D/F3"]
+        assert out[2]["category_path"] == "Zeno/Documents/Design/F2"
+        assert out[3]["category_path"] == "Zeno/Documents/Design/F3"
+
+    def test_llm_error_yields_fallback_not_crash(self, monkeypatch):
+        import sort as sort_mod
+        from sorter.classifier import OllamaClient
+
+        entries = [_folder_entry("D/A", {".png": 3})]
+        monkeypatch.setattr(OllamaClient, "_call_ollama",
+                            lambda self, prompt: (_ for _ in ()).throw(RuntimeError("down")))
+        out = sort_mod._classify_folders(entries, Path("config.yaml"),
+                                         {"ollama": {"batch_size": 15}}, "tax")
+        assert len(out) == 1
+        # LLM unreachable twice -> deterministic last-resort net, not a crash
+        assert out[0]["category_path"] == "Media/Photos"
+        assert "Det fallback" in out[0]["reason"]
+
+
+class TestFallbackCoversExplicitUnsorted:
+    """Plan: fallback fires on _Unsorted_Review OR confidence 0."""
+
+    def test_unsorted_with_mid_confidence_gets_fallback(self, classify):
+        run, _ = classify
+        r = run(_folder_entry("A/2015 Grafiken", {".png": 5}),
+                {"category_path": "_Unsorted_Review", "confidence": 30, "reason": "unsure"})
+        assert r["category_path"] == "Media/Photos"
+        assert "Det fallback" in r["reason"]
+
+    def test_nest_guarded_folder_stays_in_review(self, classify):
+        run, _ = classify
+        # folder name appears mid-path but is NOT the leaf -> self-nesting
+        r = run(_folder_entry("A/Bilder", {".png": 5}),
+                {"category_path": "Zeno/Documents/Bilder/Fotos", "confidence": 80, "reason": "x"})
+        assert r["category_path"] == "_Unsorted_Review"
+        assert "Nest guard" in r["reason"]
+        assert "Det fallback" not in r["reason"]
+        assert "_nest_flagged" not in r
+
+    def test_leaf_equal_to_folder_name_is_legitimate(self, classify):
+        run, _ = classify
+        r = run(_folder_entry("A/Bilder", {".png": 5}),
+                {"category_path": "Zeno/Documents/Bilder", "confidence": 80, "reason": "x"})
+        assert r["category_path"] == "Zeno/Documents/Bilder"
+        assert "Nest guard" not in r["reason"]
+
+
+class TestRetryPromptKeepsRules:
+    """A bare re-ask made the model guess by type; the retry must reuse rules."""
+
+    def test_retry_prompt_contains_design_rules(self, monkeypatch):
+        import sort as sort_mod
+        from sorter.classifier import OllamaClient
+
+        entries = [_folder_entry(f"D/F{i}", {".png": 4}) for i in range(3)]
+        seen = []
+
+        def fake_call(self, prompt):
+            seen.append(prompt)
+            if len(seen) == 1:
+                return json.dumps([{"path": "D/F0", "category_path": "Media/Photos/F0",
+                                    "confidence": 85, "reason": "a"}])
+            return json.dumps([
+                {"path": "D/F1", "category_path": "Zeno/Documents/Design/F1", "confidence": 85, "reason": "b"},
+                {"path": "D/F2", "category_path": "Zeno/Documents/Design/F2", "confidence": 85, "reason": "c"},
+            ])
+
+        monkeypatch.setattr(OllamaClient, "_call_ollama", fake_call)
+        out = sort_mod._classify_folders(entries, Path("config.yaml"),
+                                         {"ollama": {"batch_size": 15}}, "tax")
+        retry = seen[1]
+        assert "design assets" in retry
+        assert "Zeno/Documents/Design" in retry
+        assert "SUBJECT first" in retry
+        assert "answer for ALL 2 folder(s)" in retry
+        assert out[1]["category_path"] == "Zeno/Documents/Design/F1"
+
+
+class TestTrailingSlashPath:
+    """The LLM echoes 'Diverse Daten/EVE/BO Logo/' — must still match."""
+
+    def test_trailing_slash_result_is_matched_to_its_folder(self, monkeypatch):
+        import sort as sort_mod
+        from sorter.classifier import OllamaClient
+
+        entries = [_folder_entry("Diverse Daten/EVE/BO Logo",
+                                 {".jpg": 20, ".pspimage": 17, ".png": 13})]
+        monkeypatch.setattr(
+            OllamaClient, "_call_ollama",
+            lambda self, prompt: json.dumps([{
+                "path": "Diverse Daten/EVE/BO Logo/",
+                "category_path": "Zeno/Documents/BO_Logo",
+                "confidence": 85, "reason": "collection of BO logos"}]),
+        )
+        out = sort_mod._classify_folders(entries, Path("config.yaml"),
+                                         {"ollama": {"batch_size": 15}}, "tax")
+        assert out[0]["path"] == "Diverse Daten/EVE/BO Logo"
+        assert out[0]["category_path"] == "Zeno/Documents/BO_Logo"
+        assert out[0]["confidence"] == 85
+        assert "Det fallback" not in out[0]["reason"]
+        assert "no result" not in out[0]["reason"]

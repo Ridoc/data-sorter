@@ -96,6 +96,13 @@ Rules:
   (logos, banners, graphics), scanned documents, screenshots, or web graphics.
   The file name and folder context reveal the purpose.
 - Dominant file type is a secondary hint only.
+- Logos, banners, buttons, icons, graphics, mockups and drafts are
+  design assets even though they are image files -> Zeno/Documents/Design.
+- Scanned certificates, invoices, letters and other documents ->
+  Zeno/Documents, not Media/Photos (they are documents, not photos).
+- If unsure whether images are photos or design, prefer Design when the
+  file/folder names suggest artwork, branding or drafts.
+- The design subfolder lives under Zeno/Documents/Design, never a top-level Zeno/Design.
 - category_path must start with one of the top-level folders: Zeno, Family, Company, Projects, Media, Archives
 - If no existing subfolder fits, propose a new subfolder under the best top-level (e.g. "Zeno/New_Folder")
 - confidence 0-100: >85 = confident, 50-85 = unsure, <50 = uncertain
@@ -107,6 +114,7 @@ FILE TYPE RULES (use the Context hint and Folder context fields):
 - Context hint AUDACITY_PROJECT: .aup/.aup3 project files, *_data/ folders with .au chunks, or audacity_temp/ files -> classify by the folder's subject (e.g., "Hypnose" -> Zeno/Documents/Hypnosis). NEVER mark .au files as delete — they are Audacity audio recordings.
 - Context hint ADOBE_PREMIERE_TEMP: .prv extension or files in "Adobe Premiere Pro Auto-Save/", "Adobe Premiere Pro Preview Files/", "Conformed Audio Files/" directories -> category_path "DELETE" (these are safe to delete).
 - Context hint NONE: classify normally by content and file type.
+- .prtl files (Adobe Premiere title overlays) are graphics/design, NOT video files -> Zeno/Documents/Design.
 
 RENAME RULE (optional, only for vague names):
 - If the file's current name is vague or generic (e.g. "Kostentabelle", "Scan", "Unbenannt", "manager profile", "document"),

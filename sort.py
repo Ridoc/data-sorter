@@ -96,6 +96,126 @@ def step_get_taxonomy(config_path: Path) -> str:
     return get_taxonomy_yaml_string(config_path)
 
 
+def _apply_dominant_fallback(results: List[Dict], folder_entries: List[Dict]) -> None:
+    """Pin a deterministic category for folders the LLM did not classify.
+
+    Mutates results in place. Only touches entries the LLM left unanswered
+    (category _Unsorted_Review / confidence 0) AND whose extensions show a
+    clear majority media kind — a last-resort net, never a second opinion.
+    """
+    from sorter.routing import dominant_media_kind
+
+    kind_to_category = {
+        "audio": "Media/Music",
+        "video": "Media/Videos",
+        "image": "Media/Photos",
+        "doc": "Zeno/Documents",
+        "design": "Zeno/Documents/Design",
+        "binary": "Zeno/Downloads",
+    }
+    entries_by_path = {fe.get("path"): fe for fe in folder_entries}
+    for r in results:
+        if r.get("_nest_flagged"):
+            continue  # our own guard wants this one reviewed by a human
+        if r.get("category_path", "") != "_Unsorted_Review" and r.get("confidence", 0) > 0:
+            continue  # LLM gave a verdict — respect it
+        folder_entry = entries_by_path.get(r.get("path", ""))
+        if not folder_entry:
+            continue
+        dom_kind = dominant_media_kind(folder_entry.get("top_extensions", {}), 0.5)
+        override_cat = kind_to_category.get(dom_kind, "") if dom_kind else ""
+        if not override_cat:
+            continue
+        r["category_path"] = override_cat
+        r["confidence"] = 90
+        r["reason"] = (r.get("reason") or "") + (
+            f" [Det fallback: dominant {dom_kind} → {override_cat} (LLM failed)]"
+        )
+    for r in results:
+        r.pop("_nest_flagged", None)
+
+
+FOLDER_RULES = (
+    '"- Classify by SUBJECT first (folder/filenames reveal purpose), NOT by dominant file type.\\n"\n'
+    '"- Image files do NOT always mean Media/Photos: images can be design artwork\\n"\n'
+    '"  (logos, banners, graphics), scanned documents, screenshots, or web graphics.\\n"\n'
+    '"  The folder name and filenames reveal the purpose.\\n"\n'
+    '"- Dominant file type is a secondary hint only.\\n"\n'
+    '"- Logos, banners, buttons, icons, graphics, mockups and drafts are\\n"\n'
+    '"  design assets even though they are image files -> Zeno/Documents/Design.\\n"\n'
+    '"- Scanned certificates, invoices, letters and other documents ->\\n"\n'
+    '"  Zeno/Documents, not Media/Photos (they are documents, not photos).\\n"\n'
+    '"- If unsure whether images are photos or design, prefer Design when the\\n"\n'
+    '"  folder/filenames suggest artwork, branding or drafts.\\n"\n'
+    '"- The design subfolder lives under Zeno/Documents/Design, never a\\n"\n'
+    '"  top-level Zeno/Design.\\n"\n'
+    '"- category_path must start with a top-level folder (Zeno, Family, Company, Projects, Media, Archives)\\n"\n'
+    '"- MANDATORY: If Context hint is AUDACITY_PROJECT, the folder MUST be routed to "\n'
+    '"Projects/<ProjectName>/Audio/<source_folder_name>. "\n'
+    '"The <ProjectName> is derived from the folder name (e.g. Hypnose -> Projects/Hypnose/Audio/Hypnose). "\n'
+    '"ALWAYS use Projects/<Name>/Audio structure. NEVER route audio projects to Documents, Finance, or Career.\\n"\n'
+    '"- Context hint AUDACITY_PROJECT -> classify by folder name/subject, NEVER delete\\n"\n'
+    '"- Context hint ADOBE_PREMIERE_TEMP -> DELETE\\n"\n'
+    '"- Age classification OLD_TEMP_BACKUP -> DELETE (untouched 10+ years)\\n"\n'
+    '"- Age classification OLD_USER_CONTENT -> Archives/Old_Projects\\n"\n'
+    '"- MANDATORY LANGUAGE PRESERVATION: The last segment of category_path MUST be the "\n'
+    '"source folder\'s own name (verbatim, original language). NEVER translate or anglicize "\n'
+    '"German/Greek folder names.\\n"\n'
+    '"- If a new subfolder is needed for non-English content, name it in the source "\n'
+    '"content\'s language (e.g. for German \'Entwürfe Logo\' use \'Entwürfe_Logo\', never "\n'
+    '"\'Design\' or \'Logo_Drafts\').\\n"\n'
+    '"- Only the top 1-2 taxonomy levels (e.g. Zeno/Documents, Media/Photos) may be in "\n'
+    '"the primary (English) language.\\n"\n'
+    '"- When in doubt about language, keep the source folder\'s exact name.\\n"\n'
+    '"- If unsure, send to \'_Unsorted_Review\'\\n"\n'
+    '"- is_folder must be true\\n"\n'
+    '"- Return ONLY the JSON array"'
+)
+
+
+def _build_folder_prompt(entries_str: str, taxonomy_str: str) -> str:
+    """Folder classification prompt — shared by the first pass and the retry.
+
+    The retry MUST reuse these rules: a bare re-ask made the model fall back
+    to type-based guesses (logo folders -> Media/Photos).
+    """
+    return (
+        "You are a NAS file organizer. Given folder summaries, classify each folder "
+        "into the appropriate location.\n\n"
+        f"EXISTING FOLDER TAXONOMY:\n{taxonomy_str}\n\n"
+        "FOLDERS TO CLASSIFY:\n" + entries_str + "\n\n"
+        "For each folder, respond with a JSON array:\n"
+        '[{"path": "relative/folder/path", "category_path": "Zeno/Documents/FolderName", '
+        '"is_folder": true, "confidence": 85, '
+        '"reason": "Coherent folder of hypnosis audio files"}]\n\n'
+        "Rules:\n" + FOLDER_RULES
+    )
+
+
+def _call_folder_batch(client, prompt: str, batch: List[Dict]) -> List[Dict]:
+    """Call the LLM for one folder batch; never raises.
+
+    Returns only the folders the model actually answered for — a dropped
+    entry is left out so the caller can retry it instead of receiving a
+    fake review result.
+    """
+    try:
+        resp = client._call_ollama(prompt)
+    except Exception:
+        return []
+    try:
+        results = client._parse_response(resp)
+    except Exception:
+        return []
+    for r in results:
+        # The model often echoes the folder path with a trailing slash
+        # ("Diverse Daten/EVE/BO Logo/") — normalize or the result never
+        # matches its folder and a good verdict gets thrown away.
+        r["path"] = (r.get("path") or "").strip().rstrip("/")
+        r["is_folder"] = True
+    return results
+
+
 def _classify_folders(
     folder_entries: List[Dict], config_path: Path, cfg: Dict, taxonomy_str: str
 ) -> List[Dict]:
@@ -120,59 +240,26 @@ def _classify_folders(
         batch = folder_entries[i : i + batch_size]
         # Build folder-specific prompt
         entries_str = "\n---\n".join(format_folder_for_prompt(fe) for fe in batch)
-        prompt = (
-            "You are a NAS file organizer. Given folder summaries, classify each folder "
-            "into the appropriate location.\n\n"
-            f"EXISTING FOLDER TAXONOMY:\n{taxonomy_str}\n\n"
-            "FOLDERS TO CLASSIFY:\n" + entries_str + "\n\n"
-            "For each folder, respond with a JSON array:\n"
-            '[{"path": "relative/folder/path", "category_path": "Zeno/Documents/FolderName", '
-            '"is_folder": true, "confidence": 85, '
-            '"reason": "Coherent folder of hypnosis audio files"}]\n\n'
-"Rules:\n"
-             "- Classify by SUBJECT first (folder/filenames reveal purpose), NOT by dominant file type.\n"
-             "- Image files do NOT always mean Media/Photos: images can be design artwork\n"
-             "  (logos, banners, graphics), scanned documents, screenshots, or web graphics.\n"
-             "  The folder name and filenames reveal the purpose.\n"
-             "- Dominant file type is a secondary hint only.\n"
-             "- category_path must start with a top-level folder (Zeno, Family, Company, Projects, Media, Archives)\n"
-            "- MANDATORY: If Context hint is AUDACITY_PROJECT, the folder MUST be routed to "
-            "Projects/<ProjectName>/Audio/<source_folder_name>. "
-            "The <ProjectName> is derived from the folder name (e.g. Hypnose -> Projects/Hypnose/Audio/Hypnose). "
-            "ALWAYS use Projects/<Name>/Audio structure. NEVER route audio projects to Documents, Finance, or Career.\n"
-            "- Context hint AUDACITY_PROJECT -> classify by folder name/subject, NEVER delete\n"
-            "- Context hint ADOBE_PREMIERE_TEMP -> DELETE\n"
-            "- Age classification OLD_TEMP_BACKUP -> DELETE (untouched 10+ years)\n"
-            "- Age classification OLD_USER_CONTENT -> Archives/Old_Projects\n"
-            "- MANDATORY LANGUAGE PRESERVATION: The last segment of category_path MUST be the "
-            "source folder's own name (verbatim, original language). NEVER translate or anglicize "
-            "German/Greek folder names.\n"
-            "- If a new subfolder is needed for non-English content, name it in the source "
-            "content's language (e.g. for German 'Entwürfe Logo' use 'Entwürfe_Logo', never "
-            "'Design' or 'Logo_Drafts').\n"
-            "- Only the top 1-2 taxonomy levels (e.g. Zeno/Documents, Media/Photos) may be in "
-            "the primary (English) language.\n"
-            "- When in doubt about language, keep the source folder's exact name.\n"
-            "- If unsure, send to '_Unsorted_Review'\n"
-            "- is_folder must be true\n"
-            "- Return ONLY the JSON array"
-        )
-        try:
-            resp = client._call_ollama(prompt)
-        except Exception:
-            for fe in batch:
-                all_results.append({"path": fe["path"], "category_path": "_Unsorted_Review",
-                                    "is_folder": True, "confidence": 0, "reason": "classification failed"})
-            continue
-        try:
-            results = client._parse_response(resp)
-            for r in results:
-                r["is_folder"] = True
-            all_results.extend(results)
-        except Exception:
-            for fe in batch:
-                all_results.append({"path": fe["path"], "category_path": "_Unsorted_Review",
-                                    "is_folder": True, "confidence": 0, "reason": "parsing failed"})
+        prompt = _build_folder_prompt(entries_str, taxonomy_str)
+        all_results.extend(_call_folder_batch(client, prompt, batch))
+
+    # ── Retry folders the LLM omitted ──
+    # The model silently drops entries when a batch is large (observed: 6 of
+    # ~100 folders came back with no result at all). Re-ask for just those,
+    # one small batch, so a dropped folder does not end up in review.
+    answered = {r.get("path", "") for r in all_results}
+    missing = [fe for fe in folder_entries if fe["path"] not in answered]
+    if missing:
+        for i in range(0, len(missing), batch_size):
+            retry_batch = missing[i : i + batch_size]
+            entries_str = "\n---\n".join(format_folder_for_prompt(fe) for fe in retry_batch)
+            retry_prompt = (
+                _build_folder_prompt(entries_str, taxonomy_str)
+                + f"\n\nIMPORTANT: answer for ALL {len(retry_batch)} folder(s) listed above. "
+                "Return one JSON object per folder, using each folder's exact path "
+                "as given, and no others."
+            )
+            all_results.extend(_call_folder_batch(client, retry_prompt, retry_batch))
 
     # ── Deterministic override for audio project folders ──
     # If the LLM ignored the AUDACITY_PROJECT routing rule, override it.
@@ -208,40 +295,38 @@ def _classify_folders(
         if source_name in content_segments and content_segments[-1] != source_name:
             r["category_path"] = "_Unsorted_Review"
             r["confidence"] = min(r.get("confidence", 50), 30)
+            r["_nest_flagged"] = True  # keep out of the dominant-type fallback
             r["reason"] = (r.get("reason") or "") + f" [Nest guard: self-nesting flagged]"
 
-    # ── Dominant-type deterministic override ──
-    # If folder has >= 50% one media kind, pin category regardless of LLM
-    from sorter.routing import dominant_media_kind, EXT_ROUTE
-    from sorter.scanner import FileEntry
+    # ── Re-key onto input order (LLM returns results in arbitrary order) ──
+    # Callers zip folder_entries with these results, so a positional mismatch
+    # hands each folder another folder's category (e.g. "Rammstein 2010"
+    # routed to "Sunset Villa"). Match on the path the LLM echoed back;
+    # anything missing/duplicated becomes a review entry so count and order
+    # always line up.
+    by_path: Dict[str, Dict] = {}
     for r in all_results:
-        fpath = r.get("path", "")
-        # Look up the folder entry to get ext_counts
-        folder_entry = next((fe for fe in folder_entries if fe.get("path") == fpath), None)
-        if not folder_entry:
-            continue
-        ext_counts = folder_entry.get("top_extensions", {})
-        dom_kind = dominant_media_kind(ext_counts, 0.5)
-        if not dom_kind:
-            continue
-        kind_to_category = {
-            "audio": "Media/Music",
-            "video": "Media/Videos",
-            "image": "Media/Photos",
-            "doc": "Zeno/Documents",
-            "design": "Zeno/Documents/Design",
-            "binary": "Zeno/Downloads",
-        }
-        override_cat = kind_to_category.get(dom_kind, "")
-        if override_cat:
-            current_cat = r.get("category_path", "")
-            # Only override if LLM got it wrong or was uncertain
-            if r.get("confidence", 0) < 90 or not current_cat.startswith(kind_to_category.get(dom_kind, "_____").split("/")[0]):
-                r["category_path"] = override_cat
-                r["confidence"] = max(r.get("confidence", 0), 90)
-                r["reason"] = (r.get("reason") or "") + f" [Det: dominant {dom_kind} → {override_cat}]"
+        rpath = r.get("path", "")
+        if rpath and rpath not in by_path:
+            by_path[rpath] = r
+    ordered: List[Dict] = []
+    for fe in folder_entries:
+        r = by_path.get(fe["path"])
+        if r is None:
+            r = {"path": fe["path"], "category_path": "_Unsorted_Review",
+                 "is_folder": True, "confidence": 0, "reason": "no result for folder"}
+        r["is_folder"] = True
+        ordered.append(r)
 
-    return all_results
+    # ── Dominant-type fallback (LLM-failure only) ──
+    # Runs AFTER re-keying so it also covers folders the LLM never answered
+    # for. Subject-first LLM judgment wins (content-understanding):
+    # deterministic dominant-type routing fires ONLY when the LLM
+    # failed/abstained — never override a confident (or even low-confidence)
+    # verdict; low-confidence results go to user review anyway.
+    _apply_dominant_fallback(ordered, folder_entries)
+
+    return ordered
 
 
 def step_classify(entries: List, config_path: Path, cfg: Dict) -> List[Dict]:
@@ -524,6 +609,13 @@ Examples:
     # ── Group cohesive folders ──
     from sorter.folder_classifier import identify_cohesive_folders, make_folder_entry
     cohesive_folders, remaining_files = identify_cohesive_folders(files, min_files=2, nas_root=nas_root)
+    # Exclude the scan root itself from folder grouping (root must never be
+    # classified as a folder unit — e.g. "Diverse Daten/ → individual").
+    # Files directly under the root are returned to individual classification.
+    scan_root_path = Path(scan_target).resolve()
+    root_entries = cohesive_folders.pop(scan_root_path, None)
+    if root_entries is not None:
+        remaining_files.extend(root_entries)
     if cohesive_folders:
         console.print(f"\n[bold cyan]📁 Cohesive folders:[/]")
         for dir_path, entries in cohesive_folders.items():
@@ -552,10 +644,9 @@ Examples:
             prog.update(task, completed=len(folder_entries))
 
     # Resolve folder moves (with name canonicalization)
-    from sorter.folder_classifier import resolve_folder_move
+    from sorter.folder_classifier import resolve_folder_move, make_review_move
     from sorter.context import canonicalize_path
     approved_folder_moves = []
-    scattered_files = []
     from sorter.scanner import FileEntry
     for fe, fc in zip(folder_entries, folder_classifications):
         # Canonicalize: preserve exact source folder name (Hypnosis → Hypnose)
@@ -583,15 +674,15 @@ Examples:
             approved_folder_moves.append(move)
             console.print(f"     📁 [bold cyan]{fe['path']}/[/] → [green]{fc.get('category_path', '?')}[/] ({fc.get('confidence', 0)}%)")
         else:
-            for child_rel in fe.get("children", []):
-                child_abs = nas_root / child_rel
-                fe_obj = next((f for f in files if f.path == child_abs), None)
-                if fe_obj:
-                    scattered_files.append(fe_obj)
-            console.print(f"     📁 [dim]{fe['path']}/ → individual classification[/]")
+            # Failed/uncertain folder → keep as a UNIT in _Unsorted_Review.
+            # Never scatter children into individual classification: that
+            # produced garbage routing (loose .htm → Projects/ERGO_Paphos).
+            # User reviews ONE folder entry instead of N scattered files.
+            approved_folder_moves.append(make_review_move(fe, nas_root))
+            console.print(f"     📁 [yellow]{fe['path']}/ → _Unsorted_Review (review as unit)[/]")
 
-    # Files to classify individually
-    individual_targets = remaining_files + scattered_files
+    # Files to classify individually (folder failures stay as units — see above)
+    individual_targets = remaining_files
 
     # ── Pre-classify by deterministic extension rules ──
     routing_classifications: Dict[str, Dict] = {}
@@ -837,8 +928,10 @@ Examples:
             size_str = DedupScanner._format_size(tsize) if tsize else "0 B"
             # Display target relative to nas_root
             tgt_rel = str(Path(tgt).relative_to(nas_root)) if tgt else "?"
+            is_review = fm.get("confidence", 0) == 0
+            prefix = "⚠️ [REVIEW] " if is_review else ""
             console.print(
-                f"  [{idx}] [cyan]{Path(src).relative_to(nas_root)}[/] → [green]{tgt_rel}[/] "
+                f"  [{idx}] {prefix}[cyan]{Path(src).relative_to(nas_root)}[/] → [green]{tgt_rel}[/] "
                 f"({fcount} files, {size_str}) [dim]conf={fm.get('confidence',0)}%[/]"
             )
         console.print(
@@ -860,8 +953,12 @@ Examples:
             ]
         # else: 'all' keeps them as-is
     elif approved_folder_moves and args.execute:
-        # --execute: auto-approve all folder moves
-        pass
+        # --execute: auto-approve ONLY confident folder moves. Review-moves
+        # (failed/uncertain folders, confidence 0) must NOT be moved silently
+        # — they exist for the user to review as a unit.
+        approved_folder_moves = [
+            fm for fm in approved_folder_moves if fm.get("confidence", 0) > 0
+        ]
 
     # ── Proceed prompt or auto-execute ──
     from sorter.reviewer import CONF_REQUIRE_REVIEW
@@ -872,6 +969,11 @@ Examples:
                           and c.get("confidence", 0) >= CONF_REQUIRE_REVIEW)
     # Folder moves: each contributes file_count files
     folder_move_count = sum(fm.get("file_count", 0) for fm in approved_folder_moves)
+    # Review-moves (failed/uncertain folders going to _Unsorted_Review)
+    review_folder_count = sum(
+        fm.get("file_count", 0) for fm in approved_folder_moves
+        if fm.get("confidence", 0) == 0
+    )
     total_moves = file_move_count + folder_move_count
     total_deletions = sum(1 for c in all_classifications
                           if c.get("action") == "delete" or
@@ -883,7 +985,8 @@ Examples:
 
     if not args.dry_run and not args.execute:
         try:
-            resp = input(f"\n[bold]READY TO MOVE {total_moves} FILES?"
+            review_note = f" (+{review_folder_count} to _Unsorted_Review review)" if review_folder_count else ""
+            resp = input(f"\n[bold]READY TO MOVE {total_moves} FILES?{review_note}"
                          f"{' (+delete ' + str(total_deletions) + ')' if total_deletions else ''} [Y/n]: ")
             if resp.lower() in ("n", "no"):
                 console.print("[yellow]Aborted by user.[/]")

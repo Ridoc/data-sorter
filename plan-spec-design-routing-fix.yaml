@@ -19,7 +19,7 @@ related_plan: "content-understanding"   # completed 2026-09-20; this fixes its f
 batches:
   - id: 1
     title: "Dominant-type override → LLM-failure fallback only"
-    status: "pending"
+    status: "done"
     detail: |
       sort.py:213-242 dominant-type deterministic override currently pins any
       folder with >=50% one media kind to a fixed category (image → Media/Photos)
@@ -42,7 +42,7 @@ batches:
 
   - id: 2
     title: "Prompt reinforcement — design assets + scanned docs (no keywords)"
-    status: "pending"
+    status: "done"
     detail: |
       Extend subject-first rules with principle-level examples (NOT keyword
       lists — examples of intent, LLM generalizes):
@@ -65,7 +65,7 @@ batches:
 
   - id: 3
     title: "Unify design target + .prtl fix + scan-root exclusion"
-    status: "pending"
+    status: "done"
     detail: |
       (a) Unify design target: folders → Zeno/Documents/Design (override map
           already), loose files currently → Zeno/Design (taxonomy flat child).
@@ -89,7 +89,7 @@ batches:
 
   - id: 4
     title: "Failed-folder scatter guard"
-    status: "pending"
+    status: "done"
     detail: |
       When a cohesive folder fails classification (no move OR confidence <
       require_review), its children are currently scattered into individual
@@ -113,7 +113,7 @@ batches:
 
   - id: 5
     title: "Tests + dry-run verification"
-    status: "pending"
+    status: "done"
     detail: |
       Unit tests:
         - test_routing.py: dominant_media_kind unchanged; new test asserting
@@ -135,6 +135,16 @@ batches:
           - Referat Datensicherung & Datenschutz → _Unsorted_Review (unit), NO
             ERGO_Paphos garbage, *_files folders not Media/Photos
           - No Zeno/Design (only Zeno/Documents/Design)
+        RESULT (final full-tree run, Diverse Daten/, 3273 files):
+          PASS Entwürfe Logo, BO Logo, BRB Logo, FC Logo v2.0, Grafik für Videos,
+               ID-Cards, Y Banner, STV Homepage/Grafiken → Zeno/Documents/Design
+          PASS Zeugnisse, Arbeitsbescheinigungen, Referat Datensicherung → Zeno/Documents
+          PASS Katzen → Media/Photos; Referat children no longer ERGO_Paphos garbage
+          PASS review-as-unit queue 39 folders → 2
+          RESIDUAL (LLM judgement, not a code defect): '2015 Grafiken' → Zeno/Design
+               (flat child still reachable via a new subfolder) and
+               'Präsentation/Bilder' → Zeno/Documents/Bilder (over-corrected by the
+               scanned-documents rule). Both are visible in review, not silent.
     complexity: "simple"
     files:
       - "tests/test_routing.py"
@@ -154,3 +164,12 @@ notes:
   - "Pre-existing test failures unrelated (missing sklearn/questionary/magic, phash) — do not fix here; qa-tester commands target relevant suites."
   - "Repo: git via separate gitdir (/tmp/data-sorter-git); remote origin https://github.com/Ridoc/data-sorter.git"
   - "After ALL batches [x]: PLAN_ARCHIVE (delete this plan file) + commit + session-close sync (.docs)."
+  - "B4 code-review: F1 --execute auto-approved review-moves → FIXED (filter confidence>0); F3 [REVIEW] prefix + F4 review count in READY prompt → FIXED."
+  - "B4 code-review pre-existing (NOT regressions, tech-debt): F2 delete-guard folder branch dead (merge hardcodes action=move); F5 _Unsorted_Review leaf-name collisions get _1 suffix silently; F6 dead isinstance(e,dict) branch in individual_targets filter."
+  - "B5: make_review_move() extracted to folder_classifier.py for testability (no behavior change). Scan-root exclusion (B3c) is inline in main() → verified by dry-run only, no unit test."
+  - "B5 LIVE DRY-RUN found BLOCKER masked by B1: folder results were zipped POSITIONALLY (sort.py zip(folder_entries, folder_classifications)) but the LLM returns its JSON array in arbitrary order → each folder received ANOTHER folder's category (Rammstein 2010 → Sunset Villa, Katzen → Design, Y Banner → Microsoft Clip Organizer). Old dominant-type override rewrote nearly every category_path, hiding it. FIX: _classify_folders now re-keys results onto input order by the echoed path; missing/duplicate → _Unsorted_Review so count+order always align. Regression tests TestResultOrderMatchesInput (verified red without fix)."
+  - "B5 2nd finding: LLM silently DROPS folders from large batches (6 of ~100 in the Diverse Daten run) → they fell through to review-as-unit. FIX: omitted folders get one focused retry pass (_call_folder_batch returns only answered folders so drops are detectable)."
+  - "B5 3rd finding: first retry prompt dropped the Rules block → the re-asked folders came back as type-based guesses (BO/BRB/FC Logo, Grafik für Videos, ID-Cards → Media/Photos 90% = the fallback value). FIX: rules extracted to FOLDER_RULES + _build_folder_prompt(), reused by BOTH first pass and retry (guarded by test_retry_prompt_contains_design_rules)."
+  - "B5 4th: fallback gate was stricter than the plan (cat==_Unsorted_Review AND conf==0) → 39 folders landed in review. Aligned to the plan (fires when cat==_Unsorted_Review OR conf==0) while excluding entries flagged by our own nest guard (_nest_flagged)."
+  - "B5 tech-debt (NOT fixed, out of scope): folder category_path is never validated against the taxonomy (files are, via resolve_category) — the first fixed run emitted an impossible 'Media/Archives'."
+  - "B5 deviated from plan: make_review_move() lives in sorter/folder_classifier.py (testable module) rather than sort.py, where it would need a test harness around main()."

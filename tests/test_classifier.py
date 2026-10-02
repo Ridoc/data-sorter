@@ -320,3 +320,21 @@ class TestSuggestedNameInParseResponse:
         ])
         results = client._parse_response(text)
         assert results[0].get("suggested_name") is None
+
+# ── design-routing-fix: file prompt rules ──
+
+from sorter.classifier import PROMPT_TEMPLATE
+
+
+class TestFilePromptRules:
+    def test_subject_first_and_design_rules(self):
+        assert "SUBJECT first" in PROMPT_TEMPLATE
+        assert "design assets" in PROMPT_TEMPLATE
+        assert "Scanned certificates" in PROMPT_TEMPLATE
+
+    def test_design_lives_under_documents(self):
+        assert "never a top-level Zeno/Design" in PROMPT_TEMPLATE
+
+    def test_prtl_is_design_not_video(self):
+        assert ".prtl" in PROMPT_TEMPLATE
+        assert "NOT video" in PROMPT_TEMPLATE

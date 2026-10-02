@@ -209,6 +209,25 @@ def make_folder_entry(
     }
 
 
+def make_review_move(folder_entry: Dict, nas_root: Path) -> Dict:
+    """Build a review-move entry for a failed/uncertain folder classification.
+
+    Keeps the folder as a UNIT under _Unsorted_Review so its children are
+    never scattered into individual classification (which produced garbage
+    routing like loose .htm files → Projects/ERGO_Paphos).
+    """
+    return {
+        "source": str(nas_root / folder_entry["path"]),
+        "target": str(nas_root / "_Unsorted_Review" / Path(folder_entry["path"]).name),
+        "is_folder": True,
+        "file_count": folder_entry.get("file_count", 0),
+        "total_size": folder_entry.get("total_size", 0),
+        "confidence": 0,
+        "reason": "folder classification failed/uncertain — review as unit",
+        "_children": folder_entry.get("children", []),
+    }
+
+
 def resolve_folder_move(
     folder_entry: Dict,
     classification: Dict,
