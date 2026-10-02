@@ -228,6 +228,40 @@ def make_review_move(folder_entry: Dict, nas_root: Path) -> Dict:
     }
 
 
+MEDIUM_WORD_RE = re.compile(r"(bilder|pics|pictures|fotos|photos|screens|images|img)", re.IGNORECASE)
+
+
+def is_medium_word_name(name: str) -> bool:
+    """True when a folder name carries no subject beyond the medium.
+
+    Such names ("bilder", "zenos bilder", "Realtreffenpics", "bilder&screens")
+    must be named for their owner/event instead. They also get a dedicated
+    refinement pass, because the 7b model honours the NAMING rules for a
+    handful of folders but drops them inside a full batch.
+
+    Substring match, so false positives are possible ("Bilderrahmen"); that is
+    harmless — the folder is merely re-asked in a smaller prompt.
+    """
+    return bool(MEDIUM_WORD_RE.search(name or ""))
+
+
+def derive_medium_word_leaf(name: str) -> Optional[str]:
+    """Deterministic destination name for a medium-word folder.
+
+    "zenos bilder" -> "zenos", "Eigene Bilder" -> "Eigene",
+    "Realtreffenpics" -> "Realtreffen". Returns None when the name is nothing
+    but the medium ("bilder", "Fotos") — the caller dissolves those instead.
+
+    WHY in code and not in the prompt: the model names these destinations
+    correctly but cannot reliably emit the own_target boolean that tells the
+    pipeline to keep its leaf (measured 5/15 then 7/15 across two runs), and a
+    missing flag makes resolve_folder_move inject the source path a second time.
+    """
+    stem = MEDIUM_WORD_RE.sub("", name or "")
+    stem = re.sub(r"[\s&_.,-]+", " ", stem).strip(" -")
+    return stem or None
+
+
 def resolve_folder_move(
     folder_entry: Dict,
     classification: Dict,
@@ -259,7 +293,15 @@ def resolve_folder_move(
     rel_segments = [s for s in rel_path.replace("\\", "/").split("/") if s]
     scan_root = rel_segments[0] if rel_segments else None
 
-    if cat_parts and cat_last_norm == src_last_norm:
+    if classification.get("own_target"):
+        # LLM deliberately named the destination for the owner/event/subject
+        # ("Tina/bilder" -> Media/Photos/Tina). Its leaf IS the intended name,
+        # so skip leaf-append, ancestor injection and the anglicization strip —
+        # the NAMING rule in FOLDER_RULES is the sanctioned carve-out for those.
+        if ".." in cat_parts or cat_path.startswith("/"):
+            return None  # never let a verbatim path escape the NAS root
+        target = nas_root / cat_path
+    elif cat_parts and cat_last_norm == src_last_norm:
         # LLM already included leaf name → no double-append
         target = nas_root / cat_path
     else:

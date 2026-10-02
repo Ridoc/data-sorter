@@ -253,10 +253,16 @@ class TestFolderPromptRules:
             {"category_path": "Zeno/Documents/Design/Banner", "confidence": 90, "reason": "x"})
         p = prompts[0]
         assert "SUBJECT first" in p
-        assert "design assets" in p
+        assert "Branding, layouts, mockups and drafts" in p
         assert "Zeno/Documents/Design" in p
         assert "never a" in p and "top-level Zeno/Design" in p
         assert "Subject: Banner" in p
+        # Medium-word naming contract (owner/event instead of "bilder"/"pics")
+        assert "Bilder, bilder, pics" in p
+        assert "own_target" in p and "dissolve" in p
+        # The old "prefer Design when unsure" bias is what misrouted Eigene
+        # Bilder / zenos bilder; it must not creep back in.
+        assert "prefer Design" not in p
 
 
 class TestResultOrderMatchesInput:
@@ -416,9 +422,10 @@ class TestRetryPromptKeepsRules:
         out = sort_mod._classify_folders(entries, Path("config.yaml"),
                                          {"ollama": {"batch_size": 15}}, "tax")
         retry = seen[1]
-        assert "design assets" in retry
+        assert "Branding, layouts, mockups and drafts" in retry
         assert "Zeno/Documents/Design" in retry
         assert "SUBJECT first" in retry
+        assert "own_target" in retry and "dissolve" in retry
         assert "answer for ALL 2 folder(s)" in retry
         assert out[1]["category_path"] == "Zeno/Documents/Design/F1"
 

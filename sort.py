@@ -12,6 +12,7 @@ Usage:
 """
 
 import sys
+import re
 import argparse
 from pathlib import Path
 from typing import List, Dict, Optional
@@ -137,18 +138,38 @@ def _apply_dominant_fallback(results: List[Dict], folder_entries: List[Dict]) ->
 
 FOLDER_RULES = (
     '"- Classify by SUBJECT first (folder/filenames reveal purpose), NOT by dominant file type.\\n"\n'
-    '"- Image files do NOT always mean Media/Photos: images can be design artwork\\n"\n'
-    '"  (logos, banners, graphics), scanned documents, screenshots, or web graphics.\\n"\n'
-    '"  The folder name and filenames reveal the purpose.\\n"\n'
-    '"- Dominant file type is a secondary hint only.\\n"\n'
-    '"- Logos, banners, buttons, icons, graphics, mockups and drafts are\\n"\n'
-    '"  design assets even though they are image files -> Zeno/Documents/Design.\\n"\n'
-    '"- Scanned certificates, invoices, letters and other documents ->\\n"\n'
-    '"  Zeno/Documents, not Media/Photos (they are documents, not photos).\\n"\n'
-    '"- If unsure whether images are photos or design, prefer Design when the\\n"\n'
-    '"  folder/filenames suggest artwork, branding or drafts.\\n"\n'
+    '"- Image files do NOT always mean Media/Photos. Decide by WHAT the images\\n"\n'
+    '"  depict, not by the medium or the dominant file type.\\n"\n'
+    '"- Branding, layouts, mockups and drafts (logos, banners, buttons, icons,\\n"\n'
+    '"  graphics) -> Zeno/Documents/Design.\\n"\n'
+    '"- Artwork of game characters, avatars or a project\'s visual identity\\n"\n'
+    '"  -> Zeno/Documents/Design.\\n"\n'
+    '"- Scanned papers (Zeugnis, Bescheinigung, Rechnung, Vertrag, letter,\\n"\n'
+    '"  invoice, certificate) -> Zeno/Documents.\\n"\n'
+    '"- Opaque camera filenames (09-09-05_1740.jpg, IMG_4821.jpg) reveal no\\n"\n'
+    '"  subject at all — those are personal photos -> Media/Photos.\\n"\n'
+    '"- Never route a folder to Design merely because it is uncertain;\\n"\n'
+    '"  send it to \'_Unsorted_Review\' instead.\\n"\n'
     '"- The design subfolder lives under Zeno/Documents/Design, never a\\n"\n'
     '"  top-level Zeno/Design.\\n"\n'
+    '"\\n"\n'
+    '"NAMING — A folder named only after the medium (Bilder, bilder, pics,\\n"\n'
+    '"Fotos, Photos, Screens, Bilder&screens) carries no subject of its own.\\n"\n'
+    '"Do NOT reuse the medium word as the destination name. Name the\\n"\n'
+    '"destination for its OWNER, EVENT or depicted SUBJECT instead:\\n"\n'
+    '"  Tina/bilder     -> Media/Photos/Tina   (owner, from the parent path)\\n"\n'
+    '"  zenos bilder    -> Media/Photos/Zeno   (owner, from the folder name)\\n"\n'
+    '"  Realtreffenpics -> Media/Photos/Real Life Treffen   (the event)\\n"\n'
+    '"  Char Bilder     -> Zeno/Documents/Design/Chars   (character artwork)\\n"\n'
+    '"The owner or event may come from the PARENT path, not only the folder.\\n"\n'
+    '"These descriptive owner/event names MAY be English or bilingual even\\n"\n'
+    '"for a German source folder — the only exception to language preservation.\\n"\n'
+    '"Whenever you name the destination this way, set own_target to true so\\n"\n'
+    '"your leaf name is used verbatim instead of the source folder name.\\n"\n'
+    '"If the folder name is purely a medium word and the category should hold\\n"\n'
+    '"the files directly, return the bare category_path and set\\n"\n'
+    '"dissolve to true:\\n"\n'
+    '"  bilder&screens  -> category_path "Media/Photos", dissolve true\\n"\n'
     '"- category_path must start with a top-level folder (Zeno, Family, Company, Projects, Media, Archives)\\n"\n'
     '"- MANDATORY: If Context hint is AUDACITY_PROJECT, the folder MUST be routed to "\n'
     '"Projects/<ProjectName>/Audio/<source_folder_name>. "\n'
@@ -160,7 +181,8 @@ FOLDER_RULES = (
     '"- Age classification OLD_USER_CONTENT -> Archives/Old_Projects\\n"\n'
     '"- MANDATORY LANGUAGE PRESERVATION: The last segment of category_path MUST be the "\n'
     '"source folder\'s own name (verbatim, original language). NEVER translate or anglicize "\n'
-    '"German/Greek folder names.\\n"\n'
+    '"German/Greek folder names. (The NAMING owner/event rule above is the only "\n'
+    '"carve-out.)\\n"\n'
     '"- If a new subfolder is needed for non-English content, name it in the source "\n'
     '"content\'s language (e.g. for German \'Entwürfe Logo\' use \'Entwürfe_Logo\', never "\n'
     '"\'Design\' or \'Logo_Drafts\').\\n"\n'
@@ -171,6 +193,85 @@ FOLDER_RULES = (
     '"- is_folder must be true\\n"\n'
     '"- Return ONLY the JSON array"'
 )
+
+
+def _taxonomy_prefix(cat_path: str, tax_dict: Dict) -> str:
+    """Longest leading part of cat_path that is a real taxonomy category.
+
+    The LLM often pastes the source ancestry into category_path
+    ("Media/Photos/EVE/Neues YW Forum - Grafik"); the destination leaf is ours
+    to append, so only the genuine category prefix is kept.
+    """
+    categories = tax_dict.get("categories", {})
+    kept: List[str] = []
+    for seg in [s for s in (cat_path or "").replace("\\", "/").split("/") if s]:
+        if kept:
+            if seg not in categories.get(kept[0], []):
+                break
+        elif seg not in categories:
+            break
+        kept.append(seg)
+    return "/".join(kept)
+
+
+def _apply_medium_word_naming(folder_entry: Dict, classification: Dict, tax_dict: Dict) -> None:
+    """Name the destination for medium-word folders, deterministically. In-place.
+
+    WHY in code and not in the prompt: the model picks these destinations
+    correctly but cannot reliably emit the own_target boolean that tells the
+    pipeline to keep its leaf (measured 5/15 then 7/15 across two runs). Without
+    the flag, resolve_folder_move injects the source ancestry a SECOND time,
+    producing paths like "Media/Photos/Projekt Müller/Angebot/Ausbildung/Schule/
+    Projekt Müller/Angebot/Gruppe 1/Bilder". The model still owns the CATEGORY;
+    only the leaf and the dissolve decision are ours.
+    """
+    from sorter.folder_classifier import (
+        is_medium_word_name, derive_medium_word_leaf, meaningful_ancestors,
+    )
+    source_name = Path(folder_entry.get("path", "")).name
+    if not is_medium_word_name(source_name):
+        return
+    cat_path = classification.get("category_path", "")
+    # A model-chosen leaf is genuine when its segments do NOT occur in the
+    # source path ("Media/Photos/Zeno" for "zenos bilder" -> trust it). When they
+    # DO ("Media/Photos/EVE/-Y-/old_G_files"), the model pasted the source
+    # ancestry and we derive the name instead. This replaces the own_target
+    # boolean, which the model emitted only 5/15 then 7/15 of the time.
+    norm = lambda s: re.sub(r"\s+", " ", (s or "").lower().replace("_", " ")).strip()
+    prefix = _taxonomy_prefix(cat_path, tax_dict)
+    segs = [s for s in cat_path.replace("\\", "/").split("/") if s]
+    extra = segs[len(prefix.split("/")):] if prefix else segs
+    src_segs = {norm(s) for s in (folder_entry.get("path") or "").replace("\\", "/").split("/")}
+    if (classification.get("own_target") and extra
+            and not any(norm(e) in src_segs for e in extra)):
+        return  # model named a genuine leaf AND flagged it — respect it
+    leaf = derive_medium_word_leaf(source_name)
+    if leaf is None:
+        # Nothing but the medium in the name: the owner/event may live in the
+        # parent. Only trust it when the parent is ITSELF a meaningful name —
+        # "Tina/bilder" is Tina's photos, but "…/old_G_files/bilder&screens" is
+        # a dump inside a junk container and must dissolve instead of being
+        # named after whatever ancestor survived filtering ("EVE").
+        rel_segs = [s for s in (folder_entry.get("path") or "").replace("\\", "/").split("/") if s]
+        ancestors = meaningful_ancestors(
+            folder_entry.get("path", ""), source_name,
+            scan_root=rel_segs[0] if rel_segs else None)
+        parent = rel_segs[-2] if len(rel_segs) >= 2 else ""
+        norm = lambda s: re.sub(r"\s+", " ", (s or "").lower().replace("_", " ")).strip()
+        leaf = ancestors[-1] if ancestors and norm(ancestors[-1]) == norm(parent) else None
+    # Always normalize to the genuine taxonomy prefix — the model often pastes
+    # the source ancestry onto category_path ("Media/Photos/EVE/-Y-/old_G_files").
+    prefix = _taxonomy_prefix(classification.get("category_path", ""), tax_dict)
+    if leaf:
+        classification["category_path"] = f"{prefix}/{leaf}" if prefix else leaf
+        classification["own_target"] = True
+        # The model sometimes sets dissolve speculatively; a derived name means
+        # the folder IS being named, so that flag would discard the name.
+        classification["dissolve"] = False
+    else:
+        classification["category_path"] = prefix
+        classification["own_target"] = False
+        classification["dissolve"] = True
 
 
 def _build_folder_prompt(entries_str: str, taxonomy_str: str) -> str:
@@ -187,7 +288,7 @@ def _build_folder_prompt(entries_str: str, taxonomy_str: str) -> str:
         "For each folder, respond with a JSON array:\n"
         '[{"path": "relative/folder/path", "category_path": "Zeno/Documents/FolderName", '
         '"is_folder": true, "confidence": 85, '
-        '"reason": "Coherent folder of hypnosis audio files"}]\n\n'
+        '"reason": "Coherent folder of hypnosis audio files", "dissolve": false, "own_target": false}]\n\n'
         "Rules:\n" + FOLDER_RULES
     )
 
@@ -317,6 +418,27 @@ def _classify_folders(
                  "is_folder": True, "confidence": 0, "reason": "no result for folder"}
         r["is_folder"] = True
         ordered.append(r)
+
+    # ── Medium-word naming refinement ──
+    # The main pass packs ~15 folders per prompt; the model applies the NAMING
+    # rules (owner/event, own_target, dissolve) to a handful of folders but
+    # drops them in a full batch. Re-ask ONLY the medium-word-named folders as
+    # one small batch so those rules actually land.
+    from sorter.folder_classifier import is_medium_word_name
+    med_idx = [i for i, fe in enumerate(folder_entries)
+               if is_medium_word_name(Path(fe["path"]).name)]
+    if med_idx and len(med_idx) < len(folder_entries):
+        refined = _classify_folders(
+            [folder_entries[i] for i in med_idx], config_path, cfg, taxonomy
+        )
+        replaced = 0
+        for i, r in zip(med_idx, refined):
+            if r.get("category_path") != "_Unsorted_Review":
+                ordered[i] = r
+                replaced += 1
+        if replaced:
+            print(f"     🔁 refined {replaced}/{len(med_idx)} medium-word folder names",
+                  file=sys.stderr)
 
     # ── Dominant-type fallback (LLM-failure only) ──
     # Runs AFTER re-keying so it also covers folders the LLM never answered
@@ -648,6 +770,8 @@ Examples:
     from sorter.context import canonicalize_path
     approved_folder_moves = []
     from sorter.scanner import FileEntry
+    from sorter.taxonomy import load_taxonomy
+    tax_dict = load_taxonomy(config_path)
     for fe, fc in zip(folder_entries, folder_classifications):
         # Canonicalize: preserve exact source folder name (Hypnosis → Hypnose)
         source_unit = Path(fe["path"]).name if fe["path"] else ""
@@ -659,8 +783,6 @@ Examples:
         if cat_path:
             cat_segs = cat_path.split("/")
             if len(cat_segs) >= 2:
-                from sorter.taxonomy import load_taxonomy
-                tax_dict = load_taxonomy(config_path)
                 top = cat_segs[0]
                 known_children = tax_dict.get("categories", {}).get(top, [])
                 child = cat_segs[1]
@@ -669,10 +791,23 @@ Examples:
                     cat_segs[1] = canonical_child
                     fc["category_path"] = "/".join(cat_segs)
 
+        # ── Medium-word folders: name the destination deterministically ──
+        _apply_medium_word_naming(fe, fc, tax_dict)
+
         move = resolve_folder_move(fe, fc, nas_root)
         if move and fc.get("confidence", 0) >= cfg.get("confidence", {}).get("require_review", 50):
-            approved_folder_moves.append(move)
-            console.print(f"     📁 [bold cyan]{fe['path']}/[/] → [green]{fc.get('category_path', '?')}[/] ({fc.get('confidence', 0)}%)")
+            if fc.get("dissolve"):
+                # Medium-word folder ("bilder&screens"): drop it into the category
+                # itself so no media-word subfolder survives. Bypass
+                # resolve_folder_move's leaf-append + language guard, which would
+                # both re-add the source name we are trying to discard.
+                move["_dissolve"] = True
+                move["target"] = nas_root / fc["category_path"]
+                approved_folder_moves.append(move)
+                console.print(f"     📁 [bold cyan]{fe['path']}/[/] → [green]{fc.get('category_path', '?')}/[/] (dissolved, {fc.get('confidence', 0)}%)")
+            else:
+                approved_folder_moves.append(move)
+                console.print(f"     📁 [bold cyan]{fe['path']}/[/] → [green]{fc.get('category_path', '?')}[/] ({fc.get('confidence', 0)}%)")
         else:
             # Failed/uncertain folder → keep as a UNIT in _Unsorted_Review.
             # Never scatter children into individual classification: that
@@ -795,7 +930,11 @@ Examples:
 
     # ── Merge classifications ──
     all_classifications = file_classifications + [
-        {"path": fm["source"], "category_path": str(Path(fm["target"]).parent.relative_to(nas_root)),
+        # A dissolved folder's target IS the category, so don't take .parent
+        # (which would report "Media" for a target of "Media/Photos").
+        {"path": fm["source"],
+         "category_path": str((Path(fm["target"]) if fm.get("_dissolve") else Path(fm["target"]).parent)
+                              .relative_to(nas_root)),
          "confidence": fm["confidence"], "reason": fm["reason"], "action": "move",
          "is_folder": True, "_folder_move": fm}
         for fm in approved_folder_moves

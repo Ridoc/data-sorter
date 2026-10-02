@@ -392,6 +392,8 @@ class OllamaClient:
                     "confidence": int(item.get("confidence", 0)),
                     "reason": item.get("reason", ""),
                     "suggested_name": item.get("suggested_name"),
+                    "dissolve": bool(item.get("dissolve", False)),
+                    "own_target": bool(item.get("own_target", False)),
                 }
             )
         return results

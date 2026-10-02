@@ -37,6 +37,39 @@ def _move_folder(source: Path, target: Path, dry_run: bool = False) -> bool:
         return False
 
 
+def _dissolve_folder(source: Path, target_dir: Path, dry_run: bool = False) -> bool:
+    """Move a folder's children directly into target_dir, then drop the folder.
+
+    WHY: a folder named only after the medium ("bilder&screens") carries no
+    subject of its own; moving it as a unit leaves a media-word folder inside
+    the category. Children (incl. nested dirs) move out, so rmdir succeeds.
+    """
+    if not source.exists():
+        print(f"Error: source folder not found: {source}", file=sys.stderr)
+        return False
+    if dry_run:
+        return True
+    ensure_dir(target_dir)
+    try:
+        for child in sorted(source.iterdir()):
+            dest = target_dir / child.name
+            if dest.exists() and dest.is_dir() != child.is_dir():
+                continue  # never merge a file onto a dir or vice versa
+            if dest.exists():
+                # Suffix MUST be re-attached: "a.jpg" -> "a_1.jpg", not "a_1"
+                stem, suffix, parent = dest.stem, dest.suffix, dest.parent
+                counter = 1
+                while dest.exists():
+                    dest = parent / f"{stem}_{counter}{suffix}"
+                    counter += 1
+            shutil.move(str(child), str(dest))
+        source.rmdir()
+    except (PermissionError, OSError) as e:
+        print(f"Error dissolving folder {source} -> {target_dir}: {e}", file=sys.stderr)
+        return False
+    return True
+
+
 def ensure_dir(path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     return path
@@ -140,7 +173,10 @@ def execute_moves(
         
         # Handle folder moves (is_folder = True)
         if move.get("is_folder"):
-            ok = _move_folder(source, target, dry_run=dry_run)
+            if move.get("_dissolve"):
+                ok = _dissolve_folder(source, target, dry_run=dry_run)
+            else:
+                ok = _move_folder(source, target, dry_run=dry_run)
             if ok:
                 moved += 1
             else:
