@@ -670,7 +670,11 @@ def _classify_with_progress(
                         # a bare `\b` rejected real 3-letter ISO-639-2 codes
                         # ("deu"). Hence: optional leading qualifier, then a
                         # word-anchored 2-3 char code.
-                        reason_text = result.get("reason", "")
+                        # `or ""` not `.get(k, "")`: the LLM can emit an explicit
+                        # `"reason": null`, and .get's default only fires when the
+                        # key is ABSENT — so re.search(p, None) would TypeError and
+                        # abort the whole run mid-classification.
+                        reason_text = result.get("reason") or ""
                         lang_match = re.search(
                             r'\b(?:(?:language|detected)\s+)?(?:detected|language|lang)'
                             r'\b[:\s]+([a-z]{2,3})\b', reason_text, re.IGNORECASE)

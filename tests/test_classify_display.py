@@ -230,6 +230,7 @@ def test_batching_passes_through_and_every_file_is_reported(tmp_path, monkeypatc
     ("detected language: pt-BR", "pt"),    # region suffix must not be swallowed
     ("no language here", "?"),             # negative control: fall back to '?'
     ("", "?"),                             # empty reason
+    (None, "?"),                           # LLM emitted explicit "reason": null
 ])
 def test_language_detection_shapes(tmp_path, monkeypatch, reason, expected):
     """Pin the extraction matrix, not one happy path.
