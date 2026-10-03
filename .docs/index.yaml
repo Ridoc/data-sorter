@@ -1,8 +1,11 @@
 L0_ROUTER:
-  VERSION: "1.0"
+  VERSION: "1.1"
   PATH_ROUTES: {}
   CONCEPT_ROUTES:
     TECH_DEBT: ".docs/tech-debt.yaml"            # open debt only
+    RESOLVED: ".docs/resolved.yaml"              # confirmed resolutions (moved OUT of tech-debt)
     DESIGN: ".docs/2026-09-17-nas-file-sorter-design.yaml"  # v1.0 spec
-    SESSION_LOG: ".docs/session-log-007.yaml"     # subject-first LLM classification + Design taxonomy expansion
+    SESSION_LOG: ".docs/session-log-008.yaml"     # design-routing-fix + medium-word naming + undo-dissolve-safety
     LESSONS: ".docs/lessons.yaml"                 # append-only lessons ledger
+# NOTE: session-log-001..008 are per-session detail leaves. SESSION_LOG routes to the
+# LATEST; earlier logs are read only on demand (need-to-know, not read-all).

@@ -1,0 +1,38 @@
+# NAS AI File Sorter — Resolved (CONFIRMED resolutions only)
+# AUTO: session-close (subagent)
+# MOVE HERE ONLY WHEN CONFIRMED. Unresolved / unverified items stay in tech-debt.yaml.
+---
+STATUS: RESOLVED
+ENTRIES:
+  - id: design-routing-not-verified-live
+    resolved_in: nas-file-sorter-008 (plan design-routing-fix)
+    description: >
+      Session-007 shipped the Design taxonomy + subject-first prompt rules but never
+      verified them against a live LLM on real data, leaving a standing tech-debt item.
+    resolution: >
+      VERIFIED LIVE. Session 8a/8b ran dry-runs on 3273 real files: all 6 medium-word
+      targets correct, Design/Documents/Katzen routing held, and the Rammstein 2010
+      misroute to Videos did not recur. Design routing now has live evidence.
+    confidence: verified
+    note: >
+      This verification is what exposed the three MASKED bugs the green suite had
+      hidden (positional pairing, trailing-slash echo mismatch, silent drops) — the debt
+      item's answer is "it works", but only after four stacked bugs were removed.
+
+  - id: twelve-pre-existing-test-failures
+    resolved_in: nas-file-sorter-008 (commit c3009b1)
+    description: >
+      Session-log-007 and README both recorded "12 pre-existing failures" from the full
+      suite, treated as an acceptable baseline for several sessions.
+    resolution: >
+      NOT TEST FAILURES. They were missing optional deps (questionary x6, magic x2,
+      sklearn x2, imagehash, markitdown) in the WRONG INTERPRETER. System python3
+      cannot install them (PEP 668). With the persistent local-disk venv at
+      ~/.venvs/data-sorter the suite is green: 514 passed, 0 failed.
+    confidence: verified
+    root_cause: "Test harness/environment, not test logic."
+    note: >
+      CORRECTED IN DOCS: session-log-008 and README no longer claim 12 failures;
+      AGENTS.md records the baseline as 0 failures. The venv MUST stay on local disk —
+      this repo is a CIFS mount with no symlink support, so a venv here fails with
+      Errno 95 even using --copies.

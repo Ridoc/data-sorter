@@ -13,7 +13,7 @@ DS=~/.venvs/data-sorter/bin/python     # persistent venv on LOCAL disk
 
 $DS sort.py --dry-run         # ALWAYS preview first
 $DS sort.py --undo            # rollback last run
-$DS -m pytest tests/ -q       # 490 passed, 0 failed
+$DS -m pytest tests/ -q       # 514 passed, 0 failed
 ```
 
 WHY_THIS_VENV: >
@@ -69,15 +69,23 @@ Pipeline: `scanner → extractor → classifier → folder_classifier → routin
 `.docs/index.yaml` is the router. `lessons.yaml` is append-only. Full architecture:
 `.docs/2026-09-17-nas-file-sorter-design.yaml`.
 
-OPEN_DEBT: 3 items in `.docs/tech-debt.yaml` — dead `retry_attempts` config,
-untested folder-confirm gate, Design routing never verified against a live LLM.
-Do not claim Design routing works until it has been dry-run on real data.
+OPEN_DEBT: 11 open items in `.docs/tech-debt.yaml` (2 carried: dead `retry_attempts`
+config, untested folder-confirm gate; 9 added 2026-10-03). RESOLVED items live in
+`.docs/resolved.yaml` — notably Design routing, now VERIFIED live (3273-file dry-run).
+Suite baseline is 0 failures; the old "12 pre-existing failures" were missing deps in
+the wrong interpreter, not real failures. Latest session: `session-log-008.yaml`.
+
+SAFETY NOTE (2026-10-03): `--undo` after a dissolve once WOULD have relocated the whole
+`Media/Photos` library. Folder-level ops now emit PER-FILE undo rows and `reverse_move`
+whitelists only `move`/`delete`. Never reintroduce an aggregate directory-level row —
+`reverse_move` cannot know whether such a destination was created by the run or already
+held user data.
 
 ## SUBAGENTS
 
 | Trigger | Agent | Command |
 |---|---|---|
-| AFTER every code change | qa-tester | `python3 -m pytest tests/ -q` (expect 482) |
+| AFTER every code change | qa-tester | `$DS -m pytest tests/ -q -p no:cacheprovider` (expect 514) |
 | diff touches delete/move/symlink/routing | security-reviewer | review data-loss surface |
 | END of every session | session-close | sync `.docs/**` + commit |
 

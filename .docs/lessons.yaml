@@ -289,3 +289,107 @@
 
 # NOTE: do NOT strip date/provenance. Do NOT delete while open risk remains.
 # Consolidate: scan for dup root_cause -> MERGE, keep LATEST prevention.
+
+# --- NEW from session-008 (design-routing-fix + medium-word naming + undo-safety) ---
+- id: 2026-10-03-vacuous-self-implementing-test
+  domain: testing
+  root_cause: >
+    TestExecuteFilter COPIED the --execute auto-approval predicate into its own test body
+    instead of exercising the production code. A test that re-implements the predicate it
+    tests cannot fail: the copy and the original both changed together (or the copy stayed
+    green while production drifted). Two tests passed against the BUGGY code for exactly
+    this reason.
+  prevention: >
+    tests/test_derived_wiring.py extracts the REAL statements from sort.main() by AST and
+    execs them, so a production change necessarily breaks the test. Rule: NEVER re-implement
+    a predicate inside a test — extract it from the source, or call it. AND: always probe a
+    new test for NON-VACUITY by reverting the implementation and confirming the test FAILS;
+    a test that passes against both versions is testing nothing.
+  session: nas-file-sorter-008
+  confidence: verified
+
+- id: 2026-10-03-green-suite-hides-execution-bugs
+  domain: testing
+  root_cause: >
+    The folder-move collision bug (undo rows recorded the PRE-collision target, stranding
+    moved folders at X_1) survived 513 PASSING tests because nothing covered folder-move
+    collisions at all. Dry-run exercises classification and never the move path, so the whole
+    execution half of the tool was untested by the routine workflow.
+  prevention: >
+    A green suite proves the paths you covered, nothing more. --dry-run validates
+    CLASSIFICATION, never EXECUTION — collision resolution, per-file record emission and
+    undo reversal only run on real non-dry execution. Treat "the suite is green" as
+    evidence about the diff, not about the feature, and cover the move/undo paths explicitly.
+  session: nas-file-sorter-008
+  confidence: verified
+
+- id: 2026-10-03-aggregate-log-rows-unrecoverable
+  domain: data-integrity/undo
+  root_cause: >
+    A dissolve wrote ONE aggregate folder_move row whose target_path was the SHARED CATEGORY
+    directory, and reverse_move treated any non-delete action as a directory move. --undo
+    therefore ran shutil.move(Media/Photos, .../bilder&screens) — it would have relocated the
+    user's ENTIRE photo library. reverse_move cannot tell whether a directory-level
+    destination was created by this run or already held user data.
+  prevention: >
+    Log PER-FILE rows for every directory-level operation (pre-move hash + post-collision
+    target), and whitelist ONLY reversible actions: reverse_move accepts move/delete and
+    REFUSES aggregate rows (folder_move, dissolve_summary) instead of guessing. An aggregate
+    row for a directory operation is unrecoverable BY DESIGN. Trace rows may still be written
+    for auditability — they are refused, not reversed.
+  session: nas-file-sorter-008
+  confidence: verified
+
+- id: 2026-10-03-llm-array-order-is-not-contract
+  domain: llm/integration
+  root_cause: >
+    sort.py zipped folder_entries with folder_classifications POSITIONALLY, but the LLM
+    returns its JSON array in ARBITRARY order — folders silently received each other's
+    categories. Compounding it, the LLM echoes the path WITH a trailing slash ("path/") while
+    the entry key has none, so exact-match lookup failed and the failure path ran the
+    dominant-type fallback, overriding GOOD verdicts.
+  prevention: >
+    NEVER rely on array order from an LLM response — always RE-KEY by the echoed identifier,
+    and normalise both sides (.strip().rstrip("/")) before comparing. When a folder is missing
+    from a response, retry it with the SAME prompt builder (_build_folder_prompt): a bare
+    re-ask drops the rules and the model guesses by type, re-creating the bias you removed.
+  session: nas-file-sorter-008
+  confidence: verified
+
+- id: 2026-10-03-model-owns-category-code-owns-leaf
+  domain: classification/folder
+  root_cause: >
+    Folders named only after the MEDIUM (Bilder, pics, Fotos) carry no subject — there is
+    nothing to classify. The model routes them correctly but emits the own_target boolean
+    only 5/15 then 7/15 of the time, and without it resolve_folder_move injects source
+    ancestry TWICE, producing paths like Media/Photos/Projekt Müller/Angebot/Gruppe 1/Bilder.
+    The blocker was the CODE layer: routing correct targets through the existing resolver gave
+    5/5 WRONG, so no prompt wording could have fixed it.
+  prevention: >
+    Split authority explicitly: the MODEL owns the CATEGORY, the CODE owns the LEAF NAME
+    (derived from owner/event/depicted-subject: Tina/bilder -> Media/Photos/Tina, Char Bilder
+    -> Zeno/Documents/Design/Chars). Medium-only dumps dissolve flat into the category. And
+    because the leaf is OUR name, not the model's verdict: flag _derived, cap confidence to 70
+    (review band), exclude from --execute auto-approval, show "⚠️ [derived]". An auto-named
+    folder must be eyeballed, not silently applied.
+  session: nas-file-sorter-008
+  confidence: verified
+
+- id: 2026-10-03-7b-confidence-is-not-safety
+  domain: llm/calibration
+  root_cause: >
+    The 7B model's confidence output is near-constant: 94 of 133 folders at EXACTLY 85%. A
+    model that emits the same number for 70% of its decisions is reporting a constant, not a
+    measurement, so gating moves on that number is not a safety mechanism — it only creates
+    the APPEARANCE of one.
+  prevention: >
+    Do not treat LLM confidence as a risk signal at face value; measure its distribution first
+    (a mass at one value is a constant in disguise). Gate real risk on PROVENANCE instead —
+    e.g. a code-derived name is flagged and capped regardless of the model's self-report.
+    Also: content understanding here is FILENAME understanding — folder entries carry no
+    EXIF/OCR/pixels, so do not expect the model to see inside.
+  session: nas-file-sorter-008
+  confidence: verified
+
+# NOTE: do NOT strip date/provenance. Do NOT delete while open risk remains.
+# Consolidate: scan for dup root_cause -> MERGE, keep LATEST prevention.

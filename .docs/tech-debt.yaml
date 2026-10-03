@@ -25,17 +25,118 @@ ENTRIES:
     confidence: verified
     session: nas-file-sorter-002
 
-  - id: design-routing-not-verified-live
+  # MOVED TO RESOLVED (see .docs/resolved.yaml):
+  #   design-routing-not-verified-live -> verified by live 3273-file dry-run (session 8a/8b)
+
+  - id: log-writes-undo-csv-during-dry-run
     description: >
-      The subject-first prompt rules + Design taxonomy (content-understanding plan,
-      session-007) were NOT verified via live Ollama dry-run on real design folders
-      (no live LLM in build environment). Integration tests confirm the taxonomy
-      surface (Design in Zeno children + YAML string), and determinism is established
-      via prior sessions (temperature=0, seed=42), but end-to-end LLM routing of
-      design imagery to Zeno/Documents/Design has not been observed on real data.
-    location: "config.yaml:44, sort.py:133-137, sorter/classifier.py:94-98, sorter/folder_classifier.py:299"
+      log_move (sorter/executor.py:193) has no dry_run guard — it appends to the undo
+      CSV unconditionally. In a dry-run pass the rows describe moves that never
+      happened, so a subsequent --undo would act on phantom records.
+    location: "sorter/executor.py:193-212 (callers at 239,250,270,279,307,332; sort.py:1272-1318)"
+    status: open
+    confidence: verified
+    session: nas-file-sorter-008
+    risk_assessment: >
+      NOT production-reachable. All three execute entry points short-circuit to
+      dry_run_summary (sort.py:680, 1231) BEFORE any log_move call is reached, so a
+      pure --dry-run never reaches the writer. Residual risk: a caller added later
+      that logs without honouring dry_run would silently poison the undo CSV.
+    prevention: "If a new execute path is added, guard log_move on dry_run at the writer.
+
+  - id: undo-leaves-empty-dirs-after-collision-bump
+    description: >
+      --undo restores a collision-bumped folder (X -> X_1) but never removes the now-empty
+      source directory. undo.py contains no rmdir/rmtree, by SAFETY_INVARIANT #1 (never
+      hard-delete).
+    location: "sorter/undo.py:107-160 (reverse_move / undo_last_run)"
+    status: open
+    confidence: verified
+    session: nas-file-sorter-008
+    note: >
+      Cosmetic residue, NOT data loss. Intentionally conservative — removing the empty
+      dir is safe only if it is empty AND was created by this run, which the CSV does
+      not record. Do not 'fix' with an unconditional rmdir; that would violate
+      SAFETY_INVARIANT #1.
+
+  - id: category-conflict-flag-write-only
+    description: >
+      _category_conflict (sort.py:487) is SET when the medium-word refinement re-ask
+      disagrees with the first pass on the category prefix, but is read by nothing
+      outside tests/test_medium_word_refine.py. The disagreement IS reported to the
+      user on stderr; the flag itself is currently inert.
+    location: "sort.py:487"
+    status: open
+    confidence: verified
+    session: nas-file-sorter-008
+    note: "Harmless today. Intended consumer is likely a future review/report surface."
+
+  - id: medium-like-warning-false-positives
+    description: >
+      warn_medium_like_unmatched (sort.py:295) fires on any folder name matching
+      _MEDIUM_HINT_RE that is_medium_word_name rejects. The regex includes
+      grafiken?, which is NOT a medium word — 'Grafiken' and '2015 Grafiken'
+      false-positive even though the model routes them correctly on its own.
+    location: "sort.py:290-308"
+    status: open
+    confidence: verified
+    session: nas-file-sorter-008
+    note: >
+      Warning-only (stderr), so the cost is noise, not misrouting. The false positive
+      is arguably CORRECT behaviour — 'Grafiken' IS a blind spot of the naming rules.
+      Do not suppress it just because the model handles that case.
+
+  - id: derived-folder-count-computed-after-execute-filter
+    description: >
+      derived_folder_count (sort.py:1172) is computed AFTER the --execute auto-approval
+      filter at sort.py:1149-1156, which strips _derived entries. Under --execute the
+      count is therefore ALWAYS 0 and its derived_note never prints.
+    location: "sort.py:1149-1156, 1172-1174"
+    status: open
+    confidence: verified
+    session: nas-file-sorter-008
+    note: >
+      Value is ACCURATE (0 derived folders really were auto-approved). The hazard is
+      ordering: a future reader may 'fix' this by moving the computation above the
+      filter and then believe derived folders ARE being auto-approved. Leave as is
+      unless the intent changes.
+
+  # --- carried forward from earlier sessions (still open) ---
+  - id: folder-category-path-not-validated-against-taxonomy
+    description: >
+      Folder category_path is NEVER validated against the taxonomy tree. File-level
+      classifications are validated, but a folder can carry a category_path that does
+      not exist in config.yaml and it will be created as a literal directory.
+    location: "sorter/folder_classifier.py, sort.py (folder branch)"
+    status: open
+    confidence: verified
+    session: nas-file-sorter-008
+
+  - id: delete-guard-folder-branch-dead-code
+    description: >
+      The should_protect_from_delete() folder branch (50%+ protected children) does not
+      fire on the current path — delete-guard folder moves are unreachable in practice.
+    location: "sort.py (delete guard, folder branch)"
     status: open
     confidence: medium
-    session: content-understanding
-    note: "Pending live Ollama verification on Diverse Daten/Ausbildung (Entwürfte Logo) +
-      Diverse Daten/EVE subset (BO Logo, Grafiken, Grafik für Videos)."
+    session: nas-file-sorter-008
+
+  - id: unsorted-review-leaf-collisions-silent
+    description: >
+      _Unsorted_Review leaf collisions are resolved with _1/_2 suffixes SILENTLY —
+      no warning, no log entry. A user reviewing two same-named uncertain folders
+      cannot tell which _1 belongs to what.
+    location: "sorter/executor.py (resolve_dir_target callers)"
+    status: open
+    confidence: verified
+    session: nas-file-sorter-008
+
+  - id: scan-root-exclusion-no-unit-test
+    description: >
+      Batch 8a changed the scan root so it is no longer classified as a folder unit.
+      No unit test pins this behaviour, so a future refactor could silently re-orphan
+      the root's files.
+    location: "sorter/scanner.py (root exclusion)"
+    status: open
+    confidence: verified
+    session: nas-file-sorter-008

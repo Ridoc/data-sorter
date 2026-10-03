@@ -1,0 +1,205 @@
+# NAS AI File Sorter — Session Log 008
+# AUTO: session-close (subagent) — verified facts only
+---
+date: 2026-10-03
+session_type: "design-routing-fix + medium-word naming + undo-dissolve-safety (3 build sessions, backfilled in one sync)"
+agent: session-close
+---
+# FACT_ACCT: {
+#   added:    session-log-008.yaml (this file), resolved.yaml, 6 lessons, 5 tech-debt entries;
+#   modified: .docs/index.yaml (SESSION_LOG 007->008 + RESOLVED route);
+#   modified: .docs/tech-debt.yaml (5 new + 1 resolved);
+#   modified: .docs/lessons.yaml (6 appended);
+#   modified: README.md (490 -> 514 tests; removed stale "12 pre-existing failures");
+#   modified: AGENTS.md (490 -> 514 in COMMANDS; stale 482 in SUBAGENTS table);
+#   NOT_TOUCHED: src/**, config.yaml, plan-spec-*.yaml (all archived in git history)}
+# STATUS: MEMORY SYNCED (4-session gap backfilled; no code written, nothing re-run against user data)
+
+# NOTE ON STALENESS: logs 008 covers sessions that happened between 2026-09-18 and
+# 2026-10-03. All code was already committed AND PUSHED at the time. This session
+# writes MEMORY only — it did not run the sorter and did not touch
+# /mnt/NAS-Zeno/Diverse Daten. Test count re-verified (514 passed, 0 failed).
+
+## SESSIONS COVERED
+  session_8a: design-routing-fix        # commits 5600549, e66c926 (archived)
+  session_8b: medium-word-naming        # commit 62349a7
+  session_8c: undo-dissolve-safety      # commits b409499, f43a9a3, 071a75c
+  interleaved_docs: venv + project AGENTS.md — commits 828b90b, c3009b1
+    (NOT previously logged at all — recorded here so the 490-test baseline and the
+     "12 pre-existing failures" resolution have a home)
+
+## ─────────────────────────────────────────────────────────────
+## SESSION 8a — design-routing-fix
+## ─────────────────────────────────────────────────────────────
+plan_spec: plan-spec-design-routing-fix.yaml   # ARCHIVED (deleted from repo root per lifecycle)
+batches: 5, all [x]
+
+ROOT_CAUSE_CHAIN: >
+  Design folders (Entwuerfe Logo, BO/BRB/FC Logo, Grafik fuer Videos, ID-Cards)
+  kept landing in Media/Photos. Fixing the prompt alone did nothing, because FOUR
+  independent bugs were stacked behind it. Each mask had to be removed before the
+  next one became visible.
+
+BATCH_1 — dominant-type override demoted to LLM-FAILURE fallback
+  - _apply_dominant_fallback (sort.py) no longer overrides a confident OR a
+    low-confidence LLM verdict; it fires ONLY when the LLM failed/abstained.
+  - WHY: the override re-encoded the exact type-first heuristic session-007's
+    subject-first prompt was written to defeat — it silently beat the model.
+  - ORDERING: it runs AFTER re-keying (batch 5) so it also covers folders the LLM
+    never answered for.
+  - Lesson 2026-09-18-subject-over-filetype (prompt side) was INSUFFICIENT: the
+    same bias re-entered from the deterministic layer. See lessons 008-01.
+
+BATCH_2 — prompt reinforcement, principle-level, NO keyword lists
+  - design assets -> Zeno/Documents/Design; scanned documents -> Documents;
+    prefer Design when the NAME suggests artwork/branding/drafts.
+  - Principle preserved: let the LLM reason from context; do not hardcode keyword
+    lists that will rot.
+
+BATCH_3 — taxonomy + routing surface
+  - Design subfolder unified under Zeno/Documents/Design.
+  - .prtl (Premiere title overlays) -> Design instead of Media/Videos.
+  - The scan ROOT is no longer classified as a folder unit; its files return to
+    individual classification instead of being orphaned.
+
+BATCH_4 — failed folders become ONE review unit
+  - make_review_move collapses a failed/uncertain folder into a single
+    _Unsorted_Review unit instead of scattering children into individual
+    classification, which produced garbage (loose .htm -> Projects/ERGO_Paphos).
+  - --execute NO LONGER auto-approves review-moves: marked "[REVIEW]" and counted
+    separately in the READY prompt (sort.py:1126, count at 1168-1171).
+
+BATCH_5 — dry-run exposed the three masked bugs
+  All three below were live routing bugs that 513 passing tests never covered:
+  (a) POSITIONAL PAIRING — sort.py zipped folder_entries with folder_classifications,
+      but the LLM returns its JSON array in ARBITRARY order. Folders received each
+      other's categories. FIX: re-key by the echoed path.
+  (b) TRAILING-SLASH ECHO MISMATCH — the LLM echoes "path/" while the entry key is
+      "path". Exact-match lookup failed, and the failure path then ran the dominant
+      fallback, overriding GOOD verdicts. FIX: .strip().rstrip("/") on both sides.
+  (c) SILENT DROPS — folders the LLM omits from large batches were never revisited.
+      FIX: one focused retry pass for dropped folders, reusing the SAME
+      _build_folder_prompt. WHY same prompt: a bare re-ask made the model guess by
+      type (logo folders -> Media/Photos), re-creating bug (a).
+
+## ─────────────────────────────────────────────────────────────
+## SESSION 8b — medium-word folder naming
+## ─────────────────────────────────────────────────────────────
+THE_PRINCIPLE: >
+  A folder named only after the MEDIUM (Bilder, pics, Fotos) carries NO SUBJECT.
+  There is nothing to classify. Route it by OWNER / EVENT / DEPICTED-SUBJECT
+  instead, and let the children dissolve flat into the category.
+
+VERIFIED_TARGETS (live dry-run, 3273 files — all 6 correct):
+  Tina/bilder        -> Media/Photos/Tina
+  zenos bilder       -> Media/Photos/Zeno
+  Realtreffenpics    -> Media/Photos/Real Life Treffen
+  Eigene Bilder      -> Media/Photos/Eigene
+  Char Bilder        -> Zeno/Documents/Design/Chars
+  bilder&screens     -> dissolve flat into Media/Photos/
+
+SPLIT_OF_AUTHORITY — THE KEY ARCHITECTURAL DECISION:
+  model owns the CATEGORY; code owns the LEAF.
+  - The model classifies these folders CORRECTLY but emits the own_target boolean
+    only 5/15, later 7/15 of the time.
+  - Without own_target, resolve_folder_move injects SOURCE ANCESTRY TWICE, yielding
+    paths like Media/Photos/Projekt Müller/Angebot/Gruppe 1/Bilder — technically
+    "correct" per the taxonomy, useless to a human.
+  - Therefore the leaf NAME is COMPUTED in code (medium_word_target); own_target is
+    honoured only when the model actually sets it.
+
+THE_BLOCKER_WAS_THE_CODE_LAYER:
+  Feeding the computed targets through the EXISTING resolve_folder_move gave 5/5
+  WRONG. No amount of prompt wording could fix this — the resolver was rewriting
+  correct targets. Lesson 008-04.
+
+HARMFUL_RULE_REMOVED:
+  "prefer Design when unsure" (added 8a batch 2) misrouted Eigene Bilder and
+  zenos bilder into Design — they are photos, not artwork. Lesson 008-05.
+
+REGRESSION_GUARD: Rammstein 2010 (music) no longer misrouted to Videos.
+
+NEW_TESTS: tests/test_medium_word_deterministic.py, tests/test_medium_word_naming.py
+
+## ─────────────────────────────────────────────────────────────
+## SESSION 8c — undo-dissolve-safety (batches 1-4)
+## ─────────────────────────────────────────────────────────────
+THE_CATASTROPHE_THAT_WAS_FIXED:
+  `--undo` after a dissolve ran shutil.move(Media/Photos, .../bilder&screens) —
+  it would have RELOCATED THE USER'S ENTIRE PHOTO LIBRARY.
+  Cause: ONE aggregate folder_move row whose target_path was the SHARED CATEGORY
+  directory, and reverse_move treated ANY non-delete action as a directory move.
+  A single row carried authority over a whole category.
+
+BATCH_1 — per-file undo rows everywhere
+  - _dissolve_folder returns per-child records (pre-move hash, post-collision
+    target) so each moved file gets its OWN undo row; a partial failure no longer
+    voids the whole batch.
+  - folder_move_records() does the same for whole-folder moves, in BOTH
+    execute_moves and the --execute batch path in sort.py — the --execute path
+    NEVER honoured _dissolve at all.
+
+BATCH_2 — reverse_move action whitelist (sorter/undo.py:60-66)
+  - ONLY "move" and "delete" are reversible. Aggregate rows ("folder_move",
+    "dissolve_summary") are REFUSED with a warning, not reversed.
+  - Trace rows still get written so the operation is auditable.
+
+BATCH_3 — SECURITY: undo CSV treated as UNTRUSTED INPUT
+  undo_last_run's nas_root was a DEAD parameter. The undo CSV lives at a FIXED
+  append-only path, so ANY row in it — including a planted one — could previously
+  move files ANYWHERE on the system, not just under the NAS root.
+  FIXED:
+  - _within_root containment on BOTH ends: target_path AND source_path.
+  - source_path.parent also checked: the collision-bump case resolves to <root>_1,
+    which sits OUTSIDE the root.
+  - empty/"." source paths rejected — they raised an uncaught ValueError that
+    ABORTED THE ENTIRE UNDO RUN (one malformed row = total loss of rollback).
+
+BATCH_4 — collision hoisted so mover and recorder cannot disagree
+  _move_folder resolved a name collision into a LOCAL variable and returned only
+  bool, so folder_move_records logged the INTENDED target. On a clash that path
+  never existed, so --undo could not find the folder and it was STRANDED at the
+  bumped name (collide/X_1/moved.txt).
+  FIX: collision resolution hoisted into resolve_dir_target() (executor.py:17),
+  called by the mover AND the record builder. _move_folder returns the actual Path.
+
+BATCH_5/6 — derived-name safety + category-stable refinement
+  - Code-derived names are flagged _derived, confidence CAPPED TO 70 (review band,
+    not auto-accept), EXCLUDED from --execute auto-approval (sort.py:1155), and
+    shown as "⚠️ [derived]" (sort.py:1126) with a count in the READY summary.
+    An auto-named folder must be EYEBALLED, not silently applied.
+  - The medium-word refinement re-ask runs on a ~15x smaller batch than the main
+    pass and therefore has a WEAKER view of the taxonomy: it may refine the NAME
+    but NEVER re-route. A disagreeing category keeps the FIRST pass and is
+    reported ("⚠️ category disagreement, kept first pass", sort.py:480-487).
+  - NEW WARNINGS: warn_medium_like_unmatched (sort.py:295) surfaces folder names
+    that LOOK medium-word but missed the exact-shape gate (e.g. "Bilder (alt)"),
+    so the rules' blind spots are visible instead of silent.
+
+NEW_TESTS: tests/test_undo_dissolve.py, tests/test_undo_security.py,
+           tests/test_derived_naming.py, tests/test_derived_wiring.py,
+           tests/test_medium_word_refine.py
+
+## ─────────────────────────────────────────────────────────────
+## VERIFIED OUTCOMES (re-measured this session, 2026-10-03)
+## ─────────────────────────────────────────────────────────────
+test_count: 514 passed, 0 failed  (was 490 after the venv commit; +24 from 8a/8b/8c)
+repro: ~/.venvs/data-sorter/bin/python -m pytest tests/ -q -p no:cacheprovider
+      (-p no:cacheprovider is MANDATORY: the CIFS mount rejects pytest cache writes)
+env: "venv at ~/.venvs/data-sorter on LOCAL disk. NEVER create a venv in this repo —
+     CIFS has no symlink support (Errno 95 on lib64 -> lib, even with --copies).
+     System python3 lacks magic/questionary/imagehash/sklearn/markitdown."
+suite_baseline_CORRECTED: >
+  The "12 pre-existing failures" recorded in session-log-007 and README are
+  RESOLVED — they were never test failures, they were missing optional deps in the
+  wrong interpreter. With the persistent local-disk venv the baseline is 0 failures.
+  See .docs/resolved.yaml.
+
+## CHANGES (memory only — code already committed and pushed)
+new:      .docs/session-log-008.yaml       # this file
+new:      .docs/resolved.yaml              # confirmed resolutions (new leaf)
+modified: .docs/index.yaml                 # SESSION_LOG 007->008, +RESOLVED route
+modified: .docs/tech-debt.yaml             # 5 added, 1 moved to resolved
+modified: .docs/lessons.yaml               # 6 lessons appended
+modified: README.md                        # 490 -> 514 tests; 12-failure claim removed
+modified: AGENTS.md                        # 490 -> 514 in COMMANDS; 482 in SUBAGENTS table
