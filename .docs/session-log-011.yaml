@@ -1,0 +1,109 @@
+# NAS AI File Sorter — Session Log 011
+# AUTO: session-close (subagent) — verified facts only
+---
+date: 2026-10-03
+session_type: "security gate on a 3-commit docs+fix batch; reason=null TypeError fixed; index/test counts reconciled by parsing"
+agent: session-close
+code_commit: 3c8db5e   # HEAD of the 3-commit batch; all three already committed AND pushed before this sync
+plan_spec: null        # ad-hoc hardening/count-reconciliation session, no plan-spec batch structure
+---
+# FACT_ACCT: {
+#   added:    session-log-011.yaml (this file), 3 lessons (39 -> 42);
+#   modified: .docs/index.yaml (SESSION_LOG 010->011, VERSION 1.5->1.6);
+#   verified_not_modified:
+#       .docs/index.yaml count claims (16 debt / 7 resolved / 39 lessons) — all
+#         CORRECT against yaml.safe_load, re-confirmed this session; the count lines
+#         needed no change, only the route + VERSION did.
+#       AGENTS.md + README.md (563 claimed / 563 measured) — CORRECT, untouched;
+#   NOT_TOUCHED: sort.py, sorter/**, tests/**, config.yaml, lessons 001-039,
+#             session-log-001..010, tech-debt.yaml, resolved.yaml, AGENTS.md, README.md}
+# STATUS: MEMORY SYNCED (session-close wrote docs only; the sorter was NOT run against
+#   the NAS; /mnt/NAS-Zeno/Diverse Daten untouched)
+
+## SESSION COVERED
+  session_11: security-gate-and-count-reconciliation   # 02dce19, def1d95, 3c8db5e
+  nature: >
+    A three-commit batch closed behind the MANDATORY security-reviewer gate. Two LOW
+    findings came back and both were fixed in 3c8db5e; the rest of the session was
+    reconciling a test count that had gone stale three separate times. Net new debt:
+    ZERO. Net change to file behaviour: one crash guard. Suite 562 -> 563 passed.
+
+## ─────────────────────────────────────────────────────────────
+## WORK RECORDED (commits 02dce19, def1d95, 3c8db5e)
+## ─────────────────────────────────────────────────────────────
+1_THE_GATE_REFUSED_FIRST_AND_WAS_NOT_OVERRIDED   # process fact, kept verbatim
+  - The security-reviewer gate initially REFUSED to run. The cause was a TORN tier
+    state file: tier=DEGRADED while degraded=false, hard_block_reason absent, and
+    dead_tiers={}. That combination is one the plugin's own writers cannot emit —
+    a half-written state, not a real degradation.
+  - The refusal was NOT overridden or worked around. A fresh coherent probe was
+    taken (tier=PAID, degraded=false, hard_block_reason=null) and the gate was RE-RUN
+    on that state. Same inputs, different verdict — which is the proof the first
+    refusal was an artefact of stale state rather than a judgement about the diff.
+  - LESSON (iii) appended below: a gate refusal clears on a fresh coherent probe,
+    not on a restart. Restarting the session would have discarded the pending work
+    and changed nothing about the state that actually caused the refusal.
+
+2_LOW_1_FIXED_reason_null_ABORTED_MID_CLASSIFICATION   # the only code change this session
+  - FINDING (LOW, pre-existing — NOT a regression introduced by this batch):
+    sort.py:673 read the LLM's reason field as `result.get("reason", "")`.
+  - THE DEFECT: `dict.get`'s default fires only when the key is ABSENT. The Ollama
+    classifier emits explicit JSON, and `"reason": null` is a key that IS present —
+    so .get() returned None, re.search(pattern, None) raised TypeError, and the run
+    aborted part-way through classification. A missing key was handled; an explicit
+    null, which is the more natural thing for a model to emit for "no explanation",
+    was not.
+  - SHIPPED: `or ""` instead of the default argument. Same intent, different
+    mechanism: `or` fires for BOTH absent and null, which is what an LLM payload
+    needs and what .get() does not promise.
+  - Covered by a `(None, "?")` case added to the EXISTING parametrize matrix in
+    tests/test_classify_display.py — no new test file, no new fixture: the matrix
+    already existed and this is one more row of the same shape.
+
+3_LOW_2_FIXED_INDEX_UNDERCOUNTED_OPEN_DEBT
+  - index.yaml claimed "15 entries" for open tech-debt; the parsed count was 16.
+    AGENTS.md already said 16 and was correct — the drift was isolated to the router,
+    which is exactly the file a routing agent trusts without re-reading.
+
+4_THE_TEST_COUNT_WENT_STALE_THREE_TIMES   # process, not a code defect
+  - 554 -> 562 -> 563 across this batch, each time a claim was copied forward instead
+    of measured.
+  - The reconciliation rule adopted for the rest of this session: PARSE, never grep.
+    yaml.safe_load for debt/resolved/lesson counts, pytest --collect-only for test
+    counts. Grepping for a number in prose finds the number, not the truth, and the
+    three stale figures prove the copy-forward habit was operating unchecked.
+
+5_THE_MUTANT_VERIFICATION_WAS_WRONG_THE_FIRST_TIME   # methodological, see lesson (ii)
+  - Verifying that the `or ""` fix is load-bearing requires a mutant. My first mutant
+    appeared to PASS verification — but bash quoting ate a parenthesis, so the mutant
+    raised SyntaxError during collection. The mutant was malformed; it was never
+    parsed as Python at all, let alone executed.
+  - A mutant that fails to PARSE proves nothing about whether the mutation was caught.
+    Reading the failure reason is mandatory: SyntaxError/collection error = broken
+    harness, TestFailed/AssertionError = real kill.
+  - Redone via heredoc. The corrected mutant parses, and it genuinely fails
+    test_language_detection_shapes[None-?] — which is the only thing that makes the
+    new test case worth having.
+
+## ─────────────────────────────────────────────────────────────
+## DEBT DELTA
+## ─────────────────────────────────────────────────────────────
+  OPEN tech-debt entries: 16 (unchanged).
+  resolved.yaml: 7 entries (unchanged).
+  lessons.yaml: 39 -> 42 entries (append-only; byte count + md5 of the original
+    39936-byte prefix re-verified unchanged after the append, so no prior entry was
+    rewritten or lost — see lesson (ii) for why the previous run of this append
+    destroyed 8 entries by trusting a line-count anchor).
+
+  SUITE: 562 -> 563 passed, 0 failed. MEASURED at session close with
+    ~/.venvs/data-sorter/bin/python -m pytest tests/ -q -p no:cacheprovider
+    -> "563 passed in 1.63s". AGENTS.md (2 places) and README.md already claimed 563
+    and were verified correct — no edit needed, no drift left behind.
+
+  OPEN DEBT REMAINS, DELIBERATELY: memory-tree-half-not-machine-readable (filed in
+    02dce19). 11 of the 15 .docs files — session-log-001..011 and the design doc —
+    are prose-with-frontmatter, not parseable YAML. This log follows the house format
+    on purpose; converting 11 documents is out of scope for a sync and the debt entry
+    is the correct place for it.
+  STATUS: MEMORY SYNCED (docs only; sorter NOT run against the NAS; no user data
+    touched; HEAD not rewritten)

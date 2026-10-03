@@ -645,3 +645,86 @@
     which is how a dropped record stays invisible to the user.
   session: nas-file-sorter-010
   confidence: verified
+- id: 2026-10-03-dict-get-default-does-not-catch-an-explicit-null
+  domain: correctness/parsing
+  root_cause: >
+    sort.py read an LLM field as `result.get("reason", "")` and passed the result
+    straight to `re.search(pattern, ...)`. `dict.get`'s default argument fires ONLY
+    when the key is ABSENT. The classifier emits explicit JSON, so `"reason": null`
+    is a key that IS present with a None value — .get() returned None, re.search
+    raised TypeError, and the run aborted part-way through classification. The code
+    handled the case it was thinking about (model omits the field) and not the case
+    the model actually produces (model explicitly says "no reason"). `.get(k, d)` is
+    an absence guard, not a null guard, and the difference is invisible in review
+    because both look like "the field might be missing".
+  prevention: >
+    (1) For any value that came from LLM/external JSON, HTTP, a config file or a CLI,
+    default with `d.get(k) or d` (or a coalescing chain), never `d.get(k, default)`.
+    The `or` form covers absent AND null AND empty-string in one expression; the .get
+    form covers exactly one of the three.
+    (2) When reading a model-produced mapping, ask what an explicit null does to each
+    consumer downstream, not just what a missing key does. TypeError-raising
+    consumers (re.*, int(), len(), arithmetic, .strip()) are where this kills a run.
+    (3) Cover it with an explicit None row in the EXISTING parametrize matrix rather
+    than a new test — "(None, '?')" next to the other language cases is the whole fix,
+    and it would have caught the bug with no new fixture.
+  session: nas-file-sorter-011
+  confidence: verified
+
+- id: 2026-10-03-a-malformed-mutant-is-not-evidence-a-mutation-was-caught
+  domain: testing/verification-integrity
+  root_cause: >
+    Verifying that a one-line fix is load-bearing means mutating it back and confirming
+    the suite kills the mutant. My first mutant APPEARED to verify — the run went red —
+    and I nearly recorded that as proof the new test case catches the regression. The
+    run was red for the wrong reason: bash quoting ate a parenthesis, so the mutant
+    raised SyntaxError during COLLECTION. It was never parsed as Python, let alone
+    executed. A malformed mutant passes verification trivially, because collection
+    fails before any assertion can be evaluated — the check is unfalsifiable in the
+    direction that matters, which is exactly where you are looking when you are
+    verifying. The same class of error as a mutating tool reporting "test failed" when
+    it only means "my patch did not apply cleanly".
+  prevention: >
+    (1) After building a mutant or patch file, READ THE FAILURE REASON, never just its
+    exit status. SyntaxError / IndentationError / ImportError-at-collection /
+    "no tests ran" = BROKEN HARNESS. AssertionError / TestFailed / a named test id =
+    REAL KILL. Only the second category is evidence the mutation was caught.
+    (2) py_compile the mutant BEFORE running pytest against it. Cheap, and it converts
+    the ambiguous case into a hard failure at the right moment.
+    (3) Prefer heredoc (`python - <<'PY'`, quoted delimiter) over inline shell
+    arguments when the payload contains (), [], {} or quotes. Inline quoting ate a
+    paren here; the same payload through a quoted heredoc parsed first try.
+    (4) The general rule this belongs to: a verification that CANNOT fail is not a
+    verification. If every outcome of the check looks like success, fix the check
+    before believing its verdict.
+  session: nas-file-sorter-011
+  confidence: verified
+
+- id: 2026-10-03-a-gate-refusal-clears-on-a-fresh-probe-not-a-restart
+  domain: process/tooling
+  root_cause: >
+    The mandatory security-reviewer gate refused to run, reporting DEGRADED. The
+    state file backing that verdict was TORN — tier=DEGRADED while degraded=false,
+    hard_block_reason absent, dead_tiers={} — a combination the plugin's own writers
+    cannot produce. It was a half-written state file, and the gate was faithfully
+    refusing to act on garbage. The instinct was to restart the session to clear it;
+    that would have thrown away the pending work and, more importantly, would not have
+    touched the state that caused the refusal. A fresh coherent probe (tier=PAID,
+    degraded=false, hard_block_reason=null) followed by a RE-RUN of the gate returned
+    PASS on identical inputs — which is what distinguishes a stale-state artefact
+    from a real judgement about the diff.
+  prevention: >
+    (1) On a gate refusal, DIAGNOSE THE STATE BEFORE ACTING. Read the tier state file
+    and check it against the plugin's own emitters: if the combination is one no
+    writer can produce, the state is corrupt, and the honest move is a fresh probe +
+    re-run, not a restart and not an override.
+    (2) NEVER override or bypass a security gate to make it proceed. The re-run on a
+    coherent state is not a workaround — it is the gate being given state it can
+    trust. Overriding a gate removes the only signal that the state was bad.
+    (3) The re-run is also the DIAGNOSTIC: same diff, different verdict = proof the
+    refusal was about state, not content. Record that in the session log so a later
+    reader does not re-litigate the first refusal.
+    (4) Restarting is the correct remedy for a genuinely degraded tier and the wrong
+    remedy for a torn state file. Tell them apart before spending a restart.
+  session: nas-file-sorter-011
+  confidence: verified
