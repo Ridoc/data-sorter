@@ -2,31 +2,10 @@
 # AUTO: session-close (subagent) — reconciled every session end
 STATUS: OPEN
 ENTRIES:
-  - id: retry-attempts-not-wired
-    description: >
-      retry_attempts: int = 2 is an OllamaClient constructor default
-      (sorter/classifier.py:58) but is NOT present in config.yaml — from_config
-      (classifier.py:298-314) omits it, so the default is always used — and is NOT
-      referenced in classify_batch's retry path. On JSON parse failure classify_batch
-      calls _retry_with_smaller_batches (recursive halving) with no retry_attempts-
-      limited loop, so the param is effectively dead config.
-    location: "sorter/classifier.py:58,67,98-102"
-    status: open
-    confidence: verified
-    session: nas-file-sorter-002
-
-  - id: folder-move-confirm-gate-no-integration-test
-    description: >
-      Folder-move confirmation gate (sort.py:578) prompts via stdin for accept/reject
-      per folder move before mutation — no integration test mocks stdin to verify the
-      index-parsing flow ('1 3' | 'all' | 'none') against the gate.
-    location: "sort.py:574-607"
-    status: open
-    confidence: verified
-    session: nas-file-sorter-002
-
   # MOVED TO RESOLVED (see .docs/resolved.yaml):
   #   design-routing-not-verified-live -> verified by live 3273-file dry-run (session 8a/8b)
+  #   retry-attempts-not-wired -> param REMOVED + pinned (session 9, cd4856e)
+  #   folder-move-confirm-gate-no-integration-test -> gate extracted + covered (session 9, cd4856e)
 
   - id: log-writes-undo-csv-during-dry-run
     description: >
@@ -42,7 +21,7 @@ ENTRIES:
       dry_run_summary (sort.py:680, 1231) BEFORE any log_move call is reached, so a
       pure --dry-run never reaches the writer. Residual risk: a caller added later
       that logs without honouring dry_run would silently poison the undo CSV.
-    prevention: "If a new execute path is added, guard log_move on dry_run at the writer.
+    prevention: "If a new execute path is added, guard log_move on dry_run at the writer."
 
   - id: undo-leaves-empty-dirs-after-collision-bump
     description: >
@@ -140,3 +119,125 @@ ENTRIES:
     status: open
     confidence: verified
     session: nas-file-sorter-008
+
+  # --- NEW from session-009 (folder-confirm gate coverage, commit cd4856e) ---
+  - id: memory-leaf-yaml-untested
+    description: >
+      .docs/tech-debt.yaml carried an unterminated double-quoted scalar (the prevention
+      field of log-writes-undo-csv-during-dry-run) from session-008, so the whole leaf
+      FAILED yaml.safe_load — the file every session-close is required to read and update
+      could not be machine-parsed. Repaired this session by closing the quote.
+    location: ".docs/tech-debt.yaml (log-writes-undo-csv-during-dry-run.prevention)"
+    status: open
+    confidence: verified
+    session: nas-file-sorter-009
+    note: >
+      The defect is invisible when editing by hand; it only shows up under a parser. No
+      CI or hook validates the memory tree, so a malformed leaf can survive many sessions.
+      See TOOLING_NOTES/memory-leaf-validate-on-write for the cheap guard.
+
+  - id: gate-all-path-returns-caller-list
+    description: >
+      _confirm_folder_moves returns the CALLER'S list object on the 'all' path
+      (sort.py:761-762) instead of a defensive copy. Inert today: nothing downstream
+      mutates approved_folder_moves after the gate returns.
+    location: "sort.py:761-762 (_confirm_folder_moves, 'all' branch)"
+    status: open
+    confidence: verified
+    session: nas-file-sorter-009
+    note: >
+      UNPINNED by construction: QA showed `return list(approved_folder_moves)` also
+      passes every current test, so no assertion distinguishes aliasing from copying.
+      Only matters if a future caller mutates the list in place — do not 'fix' blind.
+
+  - id: ast-scope-module-allows-decoy-extraction
+    description: >
+      tests/test_derived_wiring.py had to widen its AST SCOPE from main() to the whole
+      sort.py module when the gate moved out of main(). _grab walks that scope, so a
+      future DEAD COPY of a prefix/filter/is_review assignment elsewhere in sort.py
+      could satisfy the extraction.
+    location: "tests/test_derived_wiring.py:22-25 (SCOPE, _grab)"
+    status: open
+    confidence: verified
+    session: nas-file-sorter-009
+    note: >
+      ACCEPTED + MITIGATED, documented in the test module: narrowing SCOPE back would
+      break the extraction outright, so the residual risk is pinned instead —
+      test_gate_is_reachable_from_main asserts main() CALLS the gate and that the
+      guard still excludes --dry-run/--execute.
+
+  - id: test-count-stale-in-docs
+    description: >
+      Docs quote the suite count and it drifts every session: README/AGENTS.md said 514
+      while the cd4856e commit message said 525; the true post-commit count is 528. A
+      stale count in a doc reads as a failing baseline and misleads the next session.
+    location: "README.md (Testing), AGENTS.md (COMMANDS + SUBAGENTS table)"
+    status: open
+    confidence: verified
+    session: nas-file-sorter-009
+    note: >
+      Re-measure at session close and update in the SAME commit as the code that changes
+      the count. Re-verified here: 528 passed, 0 failed.
+
+# ─────────────────────────────────────────────────────────────
+# TOOLING_NOTES — toolchain/environment facts about the AGENT SESSION,
+# NOT defects in the sorter and NOT project lessons. They are here because
+# they cost real work today and will cost it again next session.
+# ─────────────────────────────────────────────────────────────
+TOOLING_NOTES:
+  - id: memory-leaf-validate-on-write
+    scope: agent-memory-hygiene
+    fact: >
+      Nothing validates the .docs tree. A single unterminated quote in tech-debt.yaml
+      (present at HEAD, introduced in session-008) made that ENTIRE leaf unparseable and
+      it went unnoticed because every session-close reads the file as TEXT, never as YAML.
+      Measured this session: of 13 leaves, only 4 are machine-parsable YAML — index.yaml,
+      lessons.yaml, tech-debt.yaml, resolved.yaml. The 9 session-log-*.yaml leaves (and
+      2026-09-17-nas-file-sorter-design.yaml) are PROSE with front-matter, not YAML, and
+      never parsed; a safe_load failure on those is expected, not a new defect.
+    prevention: >
+      After editing a REAL YAML leaf, parse it before moving on. Do not spend time
+      'fixing' the session logs into valid YAML — they are read as text by design, and
+      rewriting them risks losing history. But do not cite them as machine-parsed either.
+
+  - id: tmp-wiped-mid-session
+    scope: agent-toolchain
+    fact: >
+      /tmp was wiped TWICE during session 009, destroying dryrun-final3.txt once and the
+      git dir (a --separate-git-dir lives at /tmp/data-sorter-git per lessons
+      2026-09-17-cifs-git-tmp) once.
+    impact: "Lost comparison artifacts; one near-miss on version-control state."
+    prevention: >
+      Do NOT rely on /tmp or /tmp/opencode for anything that must SURVIVE the session —
+      not comparison artifacts, not the separate git dir, not intermediate baselines.
+      Copy artifacts next to the repo (or another persistent volume) before relying on
+      them. Note the tension with lessons 2026-09-17-cifs-git-dir: the git dir must be
+      OFF the CIFS mount, but /tmp is not durable — pick a persistent local-disk path
+      (e.g. ~/.cache or ~/.venvs sibling), not /tmp.
+
+  - id: hindsight-ingest-dead-402
+    scope: agent-memory-plugin
+    status: NOT_FIXED — awaiting an operator decision
+    fact: >
+      Hindsight ingest has been broken for 3 days. The daemon (localhost:9077, bank
+      coding-agent::Data Sorter) returns HTTP 200 for retains, but fact extraction never
+      completes. ~/.hindsight/profiles/coding-agent.env points at
+      HINDSIGHT_API_LLM_PROVIDER=openai with BASE_URL=https://openrouter.ai/api/v1 and a
+      stale sk-or- key (redacted — never copy the key into .docs), and the log shows
+      HTTP 402 "This request requires more credits, or fewer max_tokens" for
+      retain_extract_facts.
+    evidence: >
+      4376 failed batch_retain tasks across the rotated logs, ZERO successful retains.
+      The bank still shows stub pages — nothing retained in 3 days is searchable.
+    diagnosis: >
+      Per the global AGENTS.md AUTH_TRAP, a 402 means the billed PRODUCT is unfunded, NOT
+      that the account is out of credits. Read it as a wrong/unfunded product, not a
+      credit problem.
+    fix_required: >
+      Repoint the daemon at a FUNDED provider or local ollama (both ollama_ok and the
+      local ladder are available on this host) and restart the daemon. NOT done — needs a
+      decision, do not silently retry the same config.
+    consequence: >
+      Agent memory written this session lives ONLY in .docs/**. Do not assume anything
+      from the hindsight bank for work after 2026-09-30.
+

@@ -31,8 +31,54 @@ ENTRIES:
       ~/.venvs/data-sorter the suite is green: 514 passed, 0 failed.
     confidence: verified
     root_cause: "Test harness/environment, not test logic."
+    count_superseded: >
+      The 514 in this entry was the count at resolution time; current verified count is
+      528 passed, 0 failed (see tech-debt test-count-stale-in-docs). The entry is kept
+      verbatim because it records what was true when resolved.
     note: >
       CORRECTED IN DOCS: session-log-008 and README no longer claim 12 failures;
       AGENTS.md records the baseline as 0 failures. The venv MUST stay on local disk —
       this repo is a CIFS mount with no symlink support, so a venv here fails with
       Errno 95 even using --copies.
+
+  - id: retry-attempts-not-wired
+    resolved_in: nas-file-sorter-009 (commit cd4856e)
+    description: >
+      retry_attempts: int = 2 was an OllamaClient constructor default that was never in
+      config.yaml, never passed by from_config, and never read by any retry path — dead
+      config advertising a retry budget the code did not have (classify_batch halving
+      via _retry_with_smaller_batches, no attempt limit).
+    resolution: >
+      REMOVED rather than wired: the constructor param is deleted and so is the
+      unreachable post-`return` block in _retry_with_smaller_batches. The recursive
+      halving behaviour is unchanged. tests/test_classifier.py::
+      test_retry_attempts_dead_config_removed pins that the param is neither in the
+      signature nor an attribute of OllamaClient, so it cannot creep back unwired.
+    confidence: verified
+    note: >
+      Removal, not wiring, is deliberate: classify_batch's halving retry has no attempt
+      budget, and inventing one would change LLM call volume on a NAS-scale batch.
+      The old debt line refs (classifier.py:58,67,98-102) are stale by design.
+
+  - id: folder-move-confirm-gate-no-integration-test
+    resolved_in: nas-file-sorter-009 (commit cd4856e)
+    description: >
+      The folder-move confirmation gate — the LAST prompt before folders move on the real
+      NAS — was an untested inline block in main(); no test mocked stdin for the
+      index-parsing flow ('1 3' | 'all' | 'none').
+    resolution: >
+      Extracted to sort.py::_confirm_folder_moves(approved_folder_moves, nas_root, console)
+      (sort.py:718) and covered end-to-end in tests/test_folder_gate.py with a
+      monkeypatched builtins.input: 'all' / 'ALL' / 'none' / 1-based indices /
+      out-of-range / non-numeric / mixed / empty / unicode. Fail-closed parsing is PINNED —
+      '1 x' approves NOTHING rather than partially approving folder 1. Reachability from
+      main() and the --dry-run/--execute guard are pinned separately in
+      test_gate_is_reachable_from_main (the AST SCOPE had to widen to module level).
+    confidence: verified
+    note: >
+      The extraction was proven a PURE MOVE by QA reconstructing the HEAD block and running
+      a 36-input differential: 0 return-value differences, 0 caller-list mutations. And
+      COVERING the gate immediately exposed a real bug — Rich parsed the bracketed labels
+      as markup, so "⚠️ [derived]" never rendered at all (see lesson
+      2026-10-03-markup-eats-user-strings). The debt item's line refs (sort.py:574-607)
+      are stale: the code moved to sort.py:718.

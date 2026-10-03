@@ -585,6 +585,7 @@ def _classify_with_progress(
     
     Shows analyzing progress bar + per-file results as each batch completes.
     """
+    from rich.markup import escape
     from sorter.classifier import OllamaClient
     from sorter.taxonomy import get_taxonomy_yaml_string, resolve_category, load_taxonomy
 
@@ -647,11 +648,14 @@ def _classify_with_progress(
                 reason_short = reason[:60] if reason else ""
                 if result.get("action") == "delete" or cat == "_Unsorted_Review":
                     if result.get("action") == "delete":
-                        console.print(f"  [red]🗑️  {fname}[/] → [red]_{cat}[/] [dim]({confidence}%)[/]")
+                        console.print(f"  [red]🗑️  {escape(fname)}[/] → [red]_{escape(cat)}[/] [dim]({confidence}%)[/]")
                     else:
-                        console.print(f"  [dim]{fname}[/] → [red]_{cat}[/] [dim]({confidence}%)[/] {reason_short}")
+                        console.print(f"  [dim]{escape(fname)}[/] → [red]_{escape(cat)}[/] [dim]({confidence}%)[/] {escape(reason_short)}")
                 else:
-                    console.print(f"  [bold]{fname}[/] → [cyan]{cat}[/] [dim]({confidence}%)[/] {reason_short}")
+                    # escape(): real filesystem names are console MARKUP, so a
+                    # folder literally named "[bold]X" would render as "X" — the
+                    # user would approve a destination they were never shown.
+                    console.print(f"  [bold]{escape(fname)}[/] → [cyan]{escape(cat)}[/] [dim]({confidence}%)[/] {escape(reason_short)}")
 
                 # Show rename suggestion if present
                 suggested = result.get("suggested_name")
@@ -815,6 +819,7 @@ Examples:
         return 0
 
     from rich.console import Console
+    from rich.markup import escape
     from rich.progress import (Progress, SpinnerColumn, TextColumn,
                                BarColumn, TimeElapsedColumn)
     console = Console()
@@ -846,7 +851,7 @@ Examples:
     if cohesive_folders:
         console.print(f"\n[bold cyan]📁 Cohesive folders:[/]")
         for dir_path, entries in cohesive_folders.items():
-            console.print(f"   📁 [bold]{dir_path.name}/[/] ({len(entries)} files)")
+            console.print(f"   📁 [bold]{escape(dir_path.name)}/[/] ({len(entries)} files)")
         folder_entries = [
             make_folder_entry(dp, ents, nas_root)
             for dp, ents in cohesive_folders.items()
@@ -908,20 +913,22 @@ Examples:
                 # itself so no media-word subfolder survives. Bypass
                 # resolve_folder_move's leaf-append + language guard, which would
                 # both re-add the source name we are trying to discard.
+                # escape(): this listing is the folder-move consent path — the gate
+                # below re-prints it, but the user reads these lines too.
                 move["_dissolve"] = True
                 move["target"] = nas_root / fc["category_path"]
                 approved_folder_moves.append(move)
-                console.print(f"     📁 [bold cyan]{fe['path']}/[/] → [green]{fc.get('category_path', '?')}/[/] (dissolved, {fc.get('confidence', 0)}%)")
+                console.print(f"     📁 [bold cyan]{escape(fe['path'])}/[/] → [green]{escape(fc.get('category_path', '?'))}/[/] (dissolved, {fc.get('confidence', 0)}%)")
             else:
                 approved_folder_moves.append(move)
-                console.print(f"     📁 [bold cyan]{fe['path']}/[/] → [green]{fc.get('category_path', '?')}[/] ({fc.get('confidence', 0)}%)")
+                console.print(f"     📁 [bold cyan]{escape(fe['path'])}/[/] → [green]{escape(fc.get('category_path', '?'))}[/] ({fc.get('confidence', 0)}%)")
         else:
             # Failed/uncertain folder → keep as a UNIT in _Unsorted_Review.
             # Never scatter children into individual classification: that
             # produced garbage routing (loose .htm → Projects/ERGO_Paphos).
             # User reviews ONE folder entry instead of N scattered files.
             approved_folder_moves.append(make_review_move(fe, nas_root))
-            console.print(f"     📁 [yellow]{fe['path']}/ → _Unsorted_Review (review as unit)[/]")
+            console.print(f"     📁 [yellow]{escape(fe['path'])}/ → _Unsorted_Review (review as unit)[/]")
 
     # Files to classify individually (folder failures stay as units — see above)
     individual_targets = remaining_files
@@ -1112,9 +1119,9 @@ Examples:
     tbl.add_column("Note", style="dim")
     for cat, cnt in sorted(cat_counts.items(), key=lambda x: -x[1]):
         if cat == "_Unsorted_Review":
-            tbl.add_row(f"  🗑️  {cat}", str(cnt), "needs review / flagged for deletion")
+            tbl.add_row(f"  🗑️  {escape(cat)}", str(cnt), "needs review / flagged for deletion")
         else:
-            tbl.add_row(f"  📁 {cat}", str(cnt))
+            tbl.add_row(f"  📁 {escape(cat)}", str(cnt))
     console.print(tbl)
 
     # Folder moves detail
@@ -1133,8 +1140,10 @@ Examples:
             from sorter.deduper import DedupScanner
             size_str = DedupScanner._format_size(fs["total_size"]) if fs["total_size"] else "0 B"
             f_tbl.add_row(
-                f"  {src_name}",
-                f"  {tgt}",
+                # escape(): Table cells parse markup, so an unescaped folder name
+                # renders altered in the table the user reads before consenting.
+                f"  {escape(src_name)}",
+                f"  {escape(tgt)}",
                 str(fs["file_count"]),
                 size_str,
             )

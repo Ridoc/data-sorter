@@ -1,0 +1,112 @@
+# NAS AI File Sorter — Session Log 009
+# AUTO: session-close (subagent) — verified facts only
+---
+date: 2026-10-03
+session_type: "folder-confirm gate extraction + coverage; Rich-markup warning bug; dead config removal"
+agent: session-close
+code_commit: cd4856e   # already committed AND pushed before this sync
+---
+# FACT_ACCT: {
+#   added:    session-log-009.yaml (this file), 3 lessons, 3 tech-debt entries,
+#             TOOLING_NOTES section (2 notes: /tmp wipe, hindsight 402);
+#   moved:    retry-attempts-not-wired, folder-move-confirm-gate-no-integration-test
+#             tech-debt -> resolved (stale line refs dropped);
+#   modified: .docs/index.yaml (SESSION_LOG 008->009, +TOOLING route, VERSION 1.2);
+#   NOT_TOUCHED: sort.py, sorter/**, tests/**, config.yaml, lessons 001-029, session-log-008}
+# STATUS: MEMORY SYNCED (no code written; the sorter was NOT run; /mnt/NAS-Zeno/Diverse Daten untouched)
+
+## SESSION COVERED
+  session_9: test-cover-folder-gate   # cd4856e (sort.py, sorter/classifier.py, tests/, AGENTS.md)
+  nature: >
+    Test/refactor session. No classification behaviour changed, no taxonomy or prompt
+    change, no user data moved. The value was COVERAGE of the safety gate — and the
+    real bug that coverage immediately exposed.
+
+## ─────────────────────────────────────────────────────────────
+## WORK RECORDED (commit cd4856e)
+## ─────────────────────────────────────────────────────────────
+1_GATE_EXTRACTED_AND_COVERED
+  - The folder-confirm gate was an inline block in sort.py:main() — the only prompt
+    between a folder move and the filesystem — with NO test (tech-debt, session 2).
+  - Extracted to sort.py:718 _confirm_folder_moves(approved_folder_moves, nas_root,
+    console); called from sort.py:1167. Driven end-to-end in tests/test_folder_gate.py
+    with a monkeypatched builtins.input.
+  - FAIL-CLOSED parsing pinned: '1 x' approves NOTHING, it does not partially approve
+    folder 1. (This prompt is the last confirmation before real moves.)
+  - PURE MOVE proven, not assumed: QA reconstructed the HEAD block and ran a 36-input
+    differential (all / ALL / none / indices / out-of-range / non-numeric / mixed /
+    empty / unicode) -> 0 return-value differences, 0 caller-list mutations.
+
+2_REAL_BUG_FOUND_BY_COVERING_THE_GATE   # highest-value item of the session
+  - The listing prints through Rich, which parses `[...]` as MARKUP. "⚠️ [derived]" was
+    consumed as a style tag and SILENTLY DROPPED: a derived folder rendered as
+    "⚠️  Scans/...". The warning session-008 BATCH_3 added to stop silently auto-named
+    folders NEVER APPEARED ON SCREEN — the feature was inert in production.
+  - "[REVIEW]" survived by LUCK only: Rich's tag regex requires a LOWERCASE first char.
+  - Data-side twin: a folder literally named "[bold]Album" rendered as "Album" — the
+    user was consenting to a different name than the one displayed.
+  - FIX: rich.markup.escape() on prefix, source AND target (sort.py:730 import).
+  - LESSON: 2026-10-03-markup-eats-user-strings (escape user strings; assert on
+    RENDERED OUTPUT, not on the source expression — the label was in the source all along).
+
+3_VACUOUS_TEST_IN_MY_OWN_TEST_MODULE   # self-inflicted, logged deliberately
+  - tests/test_derived_wiring.py extracts real source by AST specifically so tests cannot
+    encode the predicate they test — yet it still hardcoded
+    `is_review = fm.get("confidence",0) == 0` in the test body.
+  - QA mutated production to `== 50` / `< 50`; the suite stayed GREEN (525 passed).
+  - FIX: the is_review statement is AST-extracted too.
+  - LESSON: 2026-10-03-vacuity-fix-creates-new-vacuity (a partial fix is still vacuous;
+    enumerate EVERY predicate feeding an assertion, then mutation-probe it).
+
+4_AST_SCOPE_WIDENED_FROM_MAIN_TO_MODULE
+  - Needed because the gate moved out of main(). Consequence: a dead copy elsewhere in
+    sort.py could satisfy _grab. Mitigated, not closed: test_gate_is_reachable_from_main
+    pins that main() CALLS the gate and that the guard still excludes --dry-run/--execute.
+  - Residual risk tracked as open debt `ast-scope-module-allows-decoy-extraction`.
+
+5_DEAD_CODE_REMOVED
+  - retry_attempts constructor param (never read by any retry path, never passed by
+    from_config) and an unreachable post-`return` block in _retry_with_smaller_batches.
+  - Pin: tests/test_classifier.py:234 test_retry_attempts_dead_config_removed.
+  - Closes tech-debt `retry-attempts-not-wired`.
+
+DOCS_TOUCHED_BY_THE_CODE_COMMIT
+  - AGENTS.md gained a MODULE_MAP line naming `_confirm_folder_moves()` /
+    `tests/test_folder_gate.py` (documentation-only; both identifiers verified present in
+    sort.py:718 and tests/). Its 514 -> 528 count bumps were applied in the working tree.
+
+## ─────────────────────────────────────────────────────────────
+## VERIFIED OUTCOMES (re-measured this session, 2026-10-03)
+## ─────────────────────────────────────────────────────────────
+test_count: 528 passed, 0 failed   (was 514 in session-008 docs; 525 in the cd4856e msg)
+repro: ~/.venvs/data-sorter/bin/python -m pytest tests/ -q -p no:cacheprovider
+      (-p no:cacheprovider is MANDATORY: the CIFS mount rejects pytest cache writes)
+identifiers_verified: sort.py:718 _confirm_folder_moves, sort.py:1167 call site,
+      sort.py:730 `from rich.markup import escape`, sort.py:761-762 the 'all' branch,
+      tests/test_folder_gate.py present, retry_attempts absent from sorter/ and config.yaml
+safety_invariants: UNCHANGED. No unlink/rmtree, no move without a CSV undo row, no name
+      translation, dry-run still mandatory before any execute path. This session added no
+      filesystem mutation of any kind.
+
+OPEN DEBT DELTA: -2 moved to resolved, +3 added (gate-all-returns-caller-list,
+      ast-scope-module-allows-decoy-extraction, test-count-stale-in-docs), +2 TOOLING_NOTES.
+      Total OPEN entries: 12.
+
+## TOOLING (see .docs/tech-debt.yaml#TOOLING_NOTES)
+  - /tmp was wiped twice this session: dryrun-final3.txt and once the git dir were lost.
+    Do not keep anything that must survive in /tmp or /tmp/opencode; keep comparison
+    artifacts next to the repo and the --separate-git-dir on a persistent local volume.
+  - Hindsight ingest has been BROKEN for 3 days (4376 failed batch_retain tasks, zero
+    successful retains; bank shows stub pages). Daemon env points at an unfunded
+    openrouter/openai product -> HTTP 402 on retain_extract_facts. NOT FIXED, awaiting a
+    decision. Agent memory for work after 2026-09-30 lives ONLY in .docs/**.
+
+## CHANGES (memory only — code already committed and pushed)
+new:      .docs/session-log-009.yaml       # this file
+modified: .docs/lessons.yaml               # 3 lessons appended (29 -> 32)
+modified: .docs/tech-debt.yaml             # 2 removed, 3 added, +TOOLING_NOTES section
+modified: .docs/resolved.yaml              # 2 entries added, +count_superseded note
+modified: .docs/index.yaml                 # SESSION_LOG 008->009, +TOOLING route
+left_dirty_on_purpose: AGENTS.md, README.md   # 514 -> 528 count bumps made in the working
+      tree; NOT committed by session-close (this sync commits .docs/** only). Whoever owns
+      the next commit must include them or the docs stay stale.

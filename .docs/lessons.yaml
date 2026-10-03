@@ -391,5 +391,66 @@
   session: nas-file-sorter-008
   confidence: verified
 
+# --- NEW from session-009 (folder-confirm gate coverage, commit cd4856e) ---
+- id: 2026-10-03-markup-eats-user-strings
+  domain: ui/rendering
+  root_cause: >
+    The folder-confirm listing is printed through Rich, which parses `[...]` as MARKUP.
+    "⚠️ [derived]" was therefore parsed as a style tag and SILENTLY DROPPED: a derived
+    folder rendered as "⚠️  Scans/...". The warning session-008 BATCH_3 added to stop
+    auto-named folders being applied unnoticed NEVER APPEARED ON SCREEN. "[REVIEW]"
+    survived only by luck — Rich's tag regex requires a LOWERCASE first character. Same
+    class of bug in the data: a folder literally named "[bold]Album" rendered as "Album",
+    so the user was consenting to a DIFFERENT name than the one shown.
+    Second half, same root cause: the RENDERING layer is invisible when you read source,
+    which is why the string test passed — the label was present in the source all along.
+  prevention: >
+    Escape EVERY user-supplied or data-derived string interpolated into a markup-rendered
+    surface (rich.markup.escape on prefix, source AND target — not just the labels), and
+    assert UI strings on the RENDERED output, never on the source expression. Rule for any
+    transpiling layer (Rich/markdown/ANSI/jinja): the text a test reads and the text a
+    user sees are two different strings until proven otherwise.
+  session: nas-file-sorter-009
+  confidence: verified
+
+- id: 2026-10-03-vacuity-fix-creates-new-vacuity
+  domain: testing
+  root_cause: >
+    REFINES 2026-10-03-vacuous-self-implementing-test. tests/test_derived_wiring.py
+    extracts real source by AST precisely so tests cannot encode the predicate they test —
+    yet it still hardcoded `is_review = fm.get("confidence",0) == 0` in the test body.
+    QA mutated production to `== 50` / `< 50` and the suite stayed GREEN (525 passed): a
+    PARTIAL vacuity fix is still vacuous. Widening the AST SCOPE from main() to the whole
+    module (needed when the gate moved out of main()) opened a second hole — a dead decoy
+    assignment elsewhere in sort.py could satisfy the extraction.
+  prevention: >
+    When de-vacuating a test, ENUMERATE EVERY predicate feeding an assertion, not just the
+    obvious one; then PROVE it by mutation probing (break the production predicate, confirm
+    the suite goes red) — green-against-mutant is the only evidence a test bites. Widening
+    a source-extraction scope requires a separate REACHABILITY pin that the caller still
+    invokes the extracted code (test_gate_is_reachable_from_main pins both the call from
+    main() and the --dry-run/--execute guard).
+  session: nas-file-sorter-009
+  confidence: verified
+
+- id: 2026-10-03-prove-pure-moves-by-differential
+  domain: refactoring/testing
+  root_cause: >
+    The confirmation gate — the LAST human check before folders move on the real NAS — was
+    an untested inline block in main(), so the highest-consequence code in the tool had no
+    coverage. Extracting it to _confirm_folder_moves() is a refactor of a SAFETY gate, and
+    "it looks like a pure move" is not evidence: the gate is the only place where a parsing
+    slip turns into unapproved moves of a family photo library.
+  prevention: >
+    Extract for testability, then PROVE the move was pure: QA reconstructed the HEAD block
+    verbatim and ran a 36-input differential (all / ALL / none / indices / out-of-range /
+    non-numeric / mixed / empty / unicode) — 0 return-value differences, 0 caller-list
+    mutations. Pin the FAIL-CLOSED direction explicitly ('1 x' approves NOTHING, not folder
+    1). Generalises: the prompt between a decision and a filesystem mutation is the
+    highest-value place to add tests, and a safety-gate extraction is not DONE until a
+    differential proves equivalence.
+  session: nas-file-sorter-009
+  confidence: verified
+
 # NOTE: do NOT strip date/provenance. Do NOT delete while open risk remains.
 # Consolidate: scan for dup root_cause -> MERGE, keep LATEST prevention.

@@ -1,11 +1,13 @@
 L0_ROUTER:
-  VERSION: "1.1"
+  VERSION: "1.2"
   PATH_ROUTES: {}
   CONCEPT_ROUTES:
-    TECH_DEBT: ".docs/tech-debt.yaml"            # open debt only
+    TECH_DEBT: ".docs/tech-debt.yaml"            # open debt only (+ TOOLING_NOTES section)
     RESOLVED: ".docs/resolved.yaml"              # confirmed resolutions (moved OUT of tech-debt)
     DESIGN: ".docs/2026-09-17-nas-file-sorter-design.yaml"  # v1.0 spec
-    SESSION_LOG: ".docs/session-log-008.yaml"     # design-routing-fix + medium-word naming + undo-dissolve-safety
-    LESSONS: ".docs/lessons.yaml"                 # append-only lessons ledger
-# NOTE: session-log-001..008 are per-session detail leaves. SESSION_LOG routes to the
+    SESSION_LOG: ".docs/session-log-009.yaml"     # folder-confirm gate coverage + Rich-markup bug + dead config removal
+    LESSONS: ".docs/lessons.yaml"                 # append-only lessons ledger (32 entries)
+# NOTE: session-log-001..009 are per-session detail leaves. SESSION_LOG routes to the
 # LATEST; earlier logs are read only on demand (need-to-know, not read-all).
+# TOOLING_NOTES (agent-session facts: /tmp wipe, hindsight 402) live at the BOTTOM of
+# tech-debt.yaml — toolchain problems, NOT project lessons; do not file them in lessons.yaml.

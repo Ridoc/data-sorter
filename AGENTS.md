@@ -13,7 +13,7 @@ DS=~/.venvs/data-sorter/bin/python     # persistent venv on LOCAL disk
 
 $DS sort.py --dry-run         # ALWAYS preview first
 $DS sort.py --undo            # rollback last run
-$DS -m pytest tests/ -q -p no:cacheprovider   # 514 passed, 0 failed
+$DS -m pytest tests/ -q -p no:cacheprovider   # 528 passed, 0 failed
 ```
 
 WHY_THIS_VENV: >
@@ -70,9 +70,9 @@ Pipeline: `scanner → extractor → classifier → folder_classifier → routin
 `.docs/index.yaml` is the router. `lessons.yaml` is append-only. Full architecture:
 `.docs/2026-09-17-nas-file-sorter-design.yaml`.
 
-OPEN_DEBT: 11 open items in `.docs/tech-debt.yaml` (2 carried: dead `retry_attempts`
-config, untested folder-confirm gate; 9 added 2026-10-03). RESOLVED items live in
-`.docs/resolved.yaml` — notably Design routing, now VERIFIED live (3273-file dry-run).
+OPEN_DEBT: 16 open items in `.docs/tech-debt.yaml`; RESOLVED items live in
+`.docs/resolved.yaml` (dead `retry_attempts` config, folder-confirm gate coverage,
+and Design routing — the last now VERIFIED live via a 3273-file dry-run).
 Suite baseline is 0 failures; the old "12 pre-existing failures" were missing deps in
 the wrong interpreter, not real failures. Latest session: `session-log-008.yaml`.
 
@@ -86,7 +86,7 @@ held user data.
 
 | Trigger | Agent | Command |
 |---|---|---|
-| AFTER every code change | qa-tester | `$DS -m pytest tests/ -q -p no:cacheprovider` (expect 514) |
+| AFTER every code change | qa-tester | `$DS -m pytest tests/ -q -p no:cacheprovider` (expect 528) |
 | diff touches delete/move/symlink/routing | security-reviewer | review data-loss surface |
 | END of every session | session-close | sync `.docs/**` + commit |
 
