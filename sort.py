@@ -1195,19 +1195,44 @@ Examples:
         from sorter.executor import execute_moves
         result = {"moved": 0, "deleted": 0, "failed": 0}
         for move in approved_moves:
-            from sorter.executor import _move_file, _move_folder, log_move, ensure_dir
+            from sorter.executor import (_move_file, _move_folder, _dissolve_folder,
+                                    folder_move_records, log_move, ensure_dir)
             source = Path(move["source"])
             target = Path(move["target"])
 
+            if move.get("_dissolve"):
+                # The folder's CHILDREN move, not the folder. Logging one aggregate
+                # row would leave the children unrecoverable by --undo.
+                records = _dissolve_folder(source, target, dry_run=False)
+                result["moved"] += len(records)
+                if not records:
+                    result["failed"] += 1
+                for rec in records:
+                    log_move(csv_path, {
+                        "source_path": rec["source"], "target_path": rec["target"],
+                        "confidence": move.get("confidence", ""), "source_hash": rec["hash"],
+                        "action": "move", "reason": move.get("reason", "")})
+                log_move(csv_path, {
+                    "source_path": str(source), "target_path": str(target),
+                    "confidence": move.get("confidence", ""), "source_hash": "",
+                    "action": "dissolve_summary",
+                    "reason": f"dissolve of {len(records)} children"})
+                prog.update(1)
+                continue
             if move.get("is_folder"):
+                # Capture per-file undo rows BEFORE the move; afterwards the source
+                # paths no longer exist to hash.
+                records = folder_move_records(source, target)
                 ok = _move_folder(source, target, dry_run=False)
                 if ok:
                     result["moved"] += 1
                 else:
                     result["failed"] += 1
-                log_move(csv_path, {"source_path": str(source), "target_path": str(target),
-                                    "confidence": move.get("confidence", ""), "source_hash": "",
-                                    "action": "folder_move", "reason": move.get("reason", "")})
+                for rec in records:
+                    log_move(csv_path, {
+                        "source_path": rec["source"], "target_path": rec["target"],
+                        "confidence": move.get("confidence", ""), "source_hash": rec["hash"],
+                        "action": "move", "reason": move.get("reason", "")})
             else:
                 source_hash = ""
                 ok = _move_file(source, target, csv_path, source_hash,

@@ -293,13 +293,17 @@ def resolve_folder_move(
     rel_segments = [s for s in rel_path.replace("\\", "/").split("/") if s]
     scan_root = rel_segments[0] if rel_segments else None
 
+    # Traversal guard applies to EVERY branch below, not just own_target: the
+    # other two build nas_root/<cat_path> too, and folder names feed the LLM, so a
+    # prompt-injected "Media/../../evil" would otherwise escape the NAS root.
+    if ".." in cat_parts or cat_path.startswith("/"):
+        return None
+
     if classification.get("own_target"):
         # LLM deliberately named the destination for the owner/event/subject
         # ("Tina/bilder" -> Media/Photos/Tina). Its leaf IS the intended name,
         # so skip leaf-append, ancestor injection and the anglicization strip —
         # the NAMING rule in FOLDER_RULES is the sanctioned carve-out for those.
-        if ".." in cat_parts or cat_path.startswith("/"):
-            return None  # never let a verbatim path escape the NAS root
         target = nas_root / cat_path
     elif cat_parts and cat_last_norm == src_last_norm:
         # LLM already included leaf name → no double-append

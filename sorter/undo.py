@@ -12,6 +12,19 @@ from sorter.executor import ensure_dir, compute_file_hash
 _CHUNK_SIZE = 65536
 
 
+def _within_root(path: Path, root: Path) -> bool:
+    """True if path resolves inside root.
+
+    WHY: the undo CSV is UNTRUSTED INPUT — a fixed, append-only filename anyone
+    with write access to .sort_logs/ can append to. Without containment, a
+    crafted row makes --undo move files to or from anywhere on the filesystem.
+    """
+    try:
+        return Path(path).resolve().is_relative_to(Path(root).resolve())
+    except (OSError, ValueError):
+        return False
+
+
 def _verify_file_hash_impl(path: Path, expected_hash: str) -> bool:
     if not path.exists():
         return False
@@ -43,6 +56,14 @@ def reverse_move(record: Dict, dry_run: bool = False) -> bool:
     target_path = Path(record.get("target_path", ""))
     action = record.get("action", "move")
 
+    # ONLY "move" and "delete" are reversible. Aggregate rows ("folder_move",
+    # "dissolve_summary") point at a SHARED directory this run did not create —
+    # reversing one would relocate an entire category, not restore a folder.
+    if action not in ("move", "delete"):
+        print(f"Warning: cannot undo action '{action}' (skipping {target_path})",
+              file=sys.stderr)
+        return False
+
     if action == "delete":
         if not target_path.exists():
             print(f"Warning: trash path not found: {target_path}", file=sys.stderr)
@@ -53,7 +74,7 @@ def reverse_move(record: Dict, dry_run: bool = False) -> bool:
         try:
             shutil_move(str(target_path), str(source_path))
             return True
-        except (PermissionError, OSError) as e:
+        except (PermissionError, OSError, ValueError) as e:
             print(f"Error undoing delete {target_path} -> {source_path}: {e}", file=sys.stderr)
             return False
 
@@ -66,7 +87,7 @@ def reverse_move(record: Dict, dry_run: bool = False) -> bool:
     try:
         shutil_move(str(target_path), str(source_path))
         return True
-    except (PermissionError, OSError) as e:
+    except (PermissionError, OSError, ValueError) as e:
         print(f"Error reversing move {target_path} -> {source_path}: {e}", file=sys.stderr)
         return False
 
@@ -90,8 +111,48 @@ def undo_last_run(csv_path: Path, nas_root: Path, dry_run: bool = False) -> Dict
     failed = 0
 
     for record in reversed(records):
+        # Aggregate trace rows (folder_move / dissolve_summary) have no per-item
+        # counterpart to restore — counting them as failures would report a clean
+        # undo as broken. reverse_move refuses them too (defence in depth).
+        if record.get("action", "move") not in ("move", "delete"):
+            skipped += 1
+            continue
+
         target_path = Path(record.get("target_path", ""))
         expected_hash = record.get("source_hash", "")
+        source_path = Path(record.get("source_path", ""))
+
+        # Containment: the CSV is untrusted, so neither end of the move may leave
+        # the NAS root. Reverse-symlink resolution happens inside _within_root.
+        # source_path.PARENT must be contained too: shutil_move resolves collisions by
+        # appending "_N" in the destination's own parent, so a row whose source_path IS
+        # the root would otherwise land at <root>_1, one level outside it.
+        if (not _within_root(target_path, nas_root)
+                or not _within_root(source_path, nas_root)
+                or not _within_root(source_path.parent, nas_root)):
+            print(f"Warning: undo path escapes NAS root — refusing "
+                  f"{source_path} <-> {target_path}", file=sys.stderr)
+            skipped += 1
+            continue
+
+        # An empty or "." source_path makes shutil_move raise ValueError (Path('.') has
+        # an empty name), which would abort the entire run. Reject it here instead.
+        if not str(source_path).strip() or source_path.name in ("", "."):
+            print(f"Warning: undo row has no usable source path — refusing "
+                  f"{target_path}", file=sys.stderr)
+            skipped += 1
+            continue
+
+        # A relocated FILE with no recorded hash has no integrity check: the user
+        # may have edited it at its destination and undo would silently discard that.
+        # Scoped to action="move" on purpose — trash restores ("delete") never carried
+        # a hash, and are already covered by the containment check above. Dirs move as
+        # units and legitimately carry "".
+        if record.get("action", "move") == "move" and not expected_hash and target_path.is_file():
+            print(f"Warning: no hash recorded for {target_path} — refusing to restore",
+                  file=sys.stderr)
+            skipped += 1
+            continue
 
         if expected_hash and target_path.exists():
             match = verify_file_hash(target_path, expected_hash)

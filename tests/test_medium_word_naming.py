@@ -59,7 +59,10 @@ def test_dissolve_moves_children_into_category_and_drops_folder(tmp_path):
     (src / "sub" / "deep.png").write_text("c")
 
     target = tmp_path / "Media" / "Photos"
-    assert _dissolve_folder(src, target) is True
+    records = _dissolve_folder(src, target)
+    assert sorted(Path(r["source"]).name for r in records) == ["10.jpg",
+                                                               "2005.11.20.jpg",
+                                                               "sub"]
 
     assert not src.exists()                                    # medium-word folder gone
     assert (target / "10.jpg").read_text() == "a"
@@ -75,7 +78,9 @@ def test_dissolve_suffixes_name_collisions(tmp_path):
     target.mkdir(parents=True)
     (target / "a.jpg").write_text("existing")
 
-    assert _dissolve_folder(src, target) is True
+    records = _dissolve_folder(src, target)
+    # The record must carry the ACTUAL post-collision destination, not the intended one
+    assert [r["target"] for r in records] == [str(target / "a_1.jpg")]
     assert (target / "a.jpg").read_text() == "existing"        # not clobbered
     assert (target / "a_1.jpg").read_text() == "new"
 
@@ -86,7 +91,10 @@ def test_dissolve_dry_run_touches_nothing(tmp_path):
     (src / "a.jpg").write_text("a")
     target = tmp_path / "Media" / "Photos"
 
-    assert _dissolve_folder(src, target, dry_run=True) is True
+    records = _dissolve_folder(src, target, dry_run=True)
+    assert len(records) == 1
+    assert records[0]["target"] == str(target / "a.jpg")       # intended, not performed
+    assert records[0]["hash"] == ""                           # no hashing in dry-run
     assert src.exists()
     assert not target.exists()
 
