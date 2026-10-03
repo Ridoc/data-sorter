@@ -1,5 +1,29 @@
 # NAS AI File Sorter — Tech Debt (OPEN items only)
 # AUTO: session-close (subagent) — reconciled every session end
+#
+# PICKUP (how to start, and what batches well):
+#   Count open items by PARSING: sum(1 for e in ENTRIES if e['status']=='open').
+#   Never grep `- id:` and never trust a number written in prose here — the count
+#   moves every session and a stale figure is its own defect (see the open item
+#   test-count-stale-in-docs).
+#   Every entry carries: id | description | location | status | confidence |
+#   session (16/16). The richer fields are NOT universal — measured coverage:
+#   note 8/16, risk_assessment 4/16, prevention 4/16, fix_hint 3/16,
+#   evidence 1/16. So do NOT assume a fix_hint exists; if an item needs one,
+#   derive it from description+location (the 3 that have fix_hint are the
+#   session-010 batch below). Enriching the older entries is itself unpaid debt.
+#
+#   BATCHABLE THEME — "silent failure in tooling/memory" (all filed session 010,
+#   one defect class, three surfaces). Fixing the CLASS rather than each site:
+#     * classifier-json-repair-breaks-on-nested-braces — a regex standing in for a
+#       parser; an unparseable LLM reply is dropped instead of surfaced.
+#     * plan-spec-yaml-not-machine-parseable — ~/.opencode/plan/*.yaml; a parser
+#       returning [] on error is indistinguishable from "no plans exist".
+#     * memory-tree-half-not-machine-readable — .docs/session-log-*.yaml + the
+#       design doc; same trap on this repo's OWN memory tree.
+#   Shared root cause: nothing fails loudly when it cannot understand its input.
+#   Decide deliberately per item — CONVERT to real YAML, or DECLARE the format
+#   text-only so tooling stops pretending to parse it. Half-measures are the bug.
 STATUS: OPEN
 ENTRIES:
   # MOVED TO RESOLVED (see .docs/resolved.yaml):
