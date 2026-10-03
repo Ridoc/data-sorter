@@ -184,29 +184,6 @@ ENTRIES:
       Note: the count in session-log-009 said "Total OPEN entries: 12"; the true
       pre-existing count was 13. Counts in prose drift exactly like the test count does.
 
-  - id: rich-escape-sweep-manual-no-lint-guard
-    description: >
-      The Rich-markup fix for user-controlled strings was applied BY HAND: commit 76dc175
-      hand-audited the six remaining console.print/Table.add_row sites in sort.py and
-      added escape() + a per-function import to each. Nothing in the repo prevents the
-      NEXT unescaped interpolation or a wrongly-scoped lazy import from shipping green.
-    location: "sort.py — unescaped-by-construction risk on any console.print/Table.add_row that interpolates a name (file-review L651-658, cohesive scan L752-754, dissolve L854/921/924, _Unsorted_Review L931, pre-gate tables L1122-1146)"
-    status: open
-    confidence: verified
-    session: nas-file-sorter-009
-    risk_assessment: >
-      Not currently live: every name-bearing interpolation on those six sites was
-      verified escaped, and all 3 functions using escape() carry the import (static AST
-      check, 0 violations). Residual risk is REGRESSION, not present breakage: the sweep
-      is a one-time manual audit with no automated enforcement, so it decays one edit
-      later. Severity when it does regress is HIGH — this is the folder-move CONSENT
-      surface, so an unescaped name means the user confirms against text they never saw.
-    prevention: >
-      Add the AST guard used during this fix as a real test (every function referencing a
-      lazily-imported name must contain that import), and consider a lint rule that flags
-      f-strings interpolating a path/name into a markup-rendering call. A hand-run grep
-      is not a guard — see lesson 2026-10-03-lazy-import-bound-in-wrong-function.
-
   - id: classify-progress-display-branch-untested
     description: >
       sort.py:_classify_with_progress (L580-712) — the per-file classification listing
@@ -226,9 +203,10 @@ ENTRIES:
       crash mid-run is a user-visible failure.
     prevention: >
       Give this branch a driven test (mock the Ollama client, capture the console output)
-      so escape()/f-string/name-resolution defects inside it fail CI. Pair with
-      rich-escape-sweep-manual-no-lint-guard; this entry is the coverage half, that one
-      is the guard half.
+      so escape()/f-string/name-resolution defects inside it fail CI. Its guard half is
+      now BUILT and closed: rich-escape-sweep-manual-no-lint-guard moved to
+      .docs/resolved.yaml at commit 0748fd5. The coverage half (this entry) stays OPEN —
+      a static escape() property guard is not a driven test of the branch.
 
 # ─────────────────────────────────────────────────────────────
 # TOOLING_NOTES — toolchain/environment facts about the AGENT SESSION,

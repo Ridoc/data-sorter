@@ -212,3 +212,48 @@ left_dirty_on_purpose: AGENTS.md, README.md   # 514 -> 528 count bumps made in t
     a human to adjudicate: accept (and drop the lesson's per-function rule) or discard.
     The hoisted form is functionally correct; the objection is that it contradicts a
     deliberate project convention recorded in sort.py's own comments and in lessons.
+
+## ── CONCURRENT WRITER — RESOLVED: COMMITS b1ed0a7 + 0748fd5 ───────────────────
+
+  STATUS: >
+    The DISPOSITION above ("left DIRTY, flagged for a human to adjudicate: accept or
+    discard") has now been adjudicated — the hoisted form was ACCEPTED and committed as
+    b1ed0a7, followed by 0748fd5. Extends, does not duplicate, the CONCURRENT WRITER
+    section: this is the same unidentified actor's work, now landed rather than pending.
+
+  b1ed0a7 "fix: escape filesystem names in every Rich-rendered listing"
+    - The unknown actor's refactor. It hoisted `from rich.markup import escape` to
+      MODULE scope in sort.py, REPLACING the per-function binding, and additionally
+      escaped an 8th site the earlier hand-audit had missed: the rename suggestion
+      `{escape(suggested)}`.
+    - ADJUDICATION: my per-function binding was deliberate, not sloppy — AGENTS.md and the
+      plan treat rich imports as lazy-by-design, and lesson
+      2026-10-03-lazy-import-bound-in-wrong-function records that binding it in the wrong
+      function caused an UnboundLocalError. The module-level hoist is nevertheless the
+      BETTER fix because it eliminates the entire hazard class instead of relocating the
+      hazard per call site. That lesson's prevention (3) is marked SUPERSEDED (retained as
+      history, append-only) rather than deleted.
+
+  0748fd5 "test: lint that catches a REMOVED escape() at every Rich render site"
+    - Closes tech-debt rich-escape-sweep-manual-no-lint-guard, moved to resolved.yaml.
+    - HIGHEST-VALUE LESSON OF THE SESSION: the FIRST version of this guard collected only
+      statements that ALREADY contained escape(), so DELETING an escape() made the
+      statement drop out of the collected set and the regression passed SILENTLY — proven,
+      the suite stayed fully green with escape() stripped from the gate's tgt_rel. The
+      fixed version inverts the direction: it scans every console.print / Table.add_row
+      for user data interpolated WITHOUT escape(). Mutation-tested 7/7 caught, control
+      green.
+    - LESSON: 2026-10-03-guard-that-checks-presence-only-is-vacuous (appended; 34 -> 35).
+
+  OPEN DEBT DELTA: 15 -> 14 OPEN entries (rich-escape-sweep-manual-no-lint-guard ->
+      resolved.yaml). classify-progress-display-branch-untested deliberately stays OPEN:
+      0748fd5 guards the escape() property STATICALLY but still does not DRIVE the
+      _classify_with_progress branch at runtime. Coverage half and guard half are
+      genuinely different debts.
+
+  KNOWN STALE (NOT FIXED HERE — outside this agent's write scope): >
+    AGENTS.md still reads "OPEN_DEBT: 15 open items"; the true parsed count is now 14.
+    AGENTS.md is outside session-close's edit scope ([.docs/**, README, CHANGELOG,
+    ROADMAP]), so the correction is FLAGGED, not applied. Same drift class as the
+    test-count-stale-in-docs entry already open in tech-debt.
+  STATUS: MEMORY SYNCED (docs only; sorter NOT run; no user data touched; HEAD not rewritten)

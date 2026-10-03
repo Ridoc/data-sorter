@@ -82,3 +82,29 @@ ENTRIES:
       as markup, so "⚠️ [derived]" never rendered at all (see lesson
       2026-10-03-markup-eats-user-strings). The debt item's line refs (sort.py:574-607)
       are stale: the code moved to sort.py:718.
+
+  - id: rich-escape-sweep-manual-no-lint-guard
+    resolved_in: nas-file-sorter-009 (commit 0748fd5)
+    description: >
+      The Rich-markup escape sweep was applied BY HAND — commit 76dc175 audited the
+      remaining console.print/Table.add_row sites in sort.py and added escape() plus a
+      per-function import to each. Nothing prevented the NEXT unescaped interpolation or
+      a wrongly-scoped lazy import from shipping green, on the folder-move CONSENT surface.
+    resolution: >
+      The lint guard this entry asked for now exists as a committed test (0748fd5). It
+      INVERTS the direction of the first attempt: instead of collecting only statements
+      that already contain escape(), it collects every console.print / Table.add_row site
+      and asserts user data interpolated without escape(). Validated by mutation testing:
+      7/7 mutations caught, control green.
+    confidence: verified
+    note: >
+      Closing this debt is what makes the successor lesson load-bearing: the FIRST guard
+      collected only statements that already had escape(), so DELETING an escape() made
+      the statement drop out of the set and the regression passed silently — the suite
+      stayed fully green with escape() stripped from the gate's tgt_rel. A guard that
+      only asserts a property is PRESENT passes forever unless it has been observed
+      FAILING when that property is REMOVED. See lesson
+      2026-10-03-guard-that-checks-presence-only-is-vacuous.
+      Companion entry, deliberately NOT closed by this commit: classify-progress-display-branch-untested
+      — 0748fd5 guards the escape() property statically but still does not DRIVE the
+      _classify_with_progress display branch at runtime.

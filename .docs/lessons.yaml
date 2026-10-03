@@ -477,7 +477,15 @@
     "tests pass" as evidence a branch is correct; first ask what DRIVES it. An undriven
     branch is untested no matter how green the suite is. (3) Do not "repair" a
     lazy-import module by hoisting imports to module level — that trades a startup cost
-    for a global dependency and contradicts the file's design. (4) After a site-by-site
+    for a global dependency and contradicts the file's design. [PREVENTION (3) SUPERSEDED
+    2026-10-03 at commit b1ed0a7 — retained as history, do not act on it: module-level
+    hoisting is now the PREFERRED remedy for this hazard class. When a lazy import must
+    be referenced from more than one scope, hoist it to module scope ONCE: that eliminates
+    the whole "bound in the wrong function" class instead of relocating the hazard to each
+    call site. Prefer one module-level binding plus an AST guard asserting the name is bound
+    at module scope, over N per-function bindings each needing its own guard. The original
+    per-function binding was deliberate and correct-at-the-time, not an oversight.]
+    (4) After a site-by-site
     sweep the sweep itself needs a guard (tech-debt
     rich-escape-sweep-manual-no-lint-guard); hand-audited fixes decay one edit later.
   session: nas-file-sorter-009
@@ -513,5 +521,33 @@
     in-repo; the only sanctioned interpreter stays ~/.venvs/data-sorter. (5) Memory
     written by an uninvoked subagent is authoritative as CONTENT but unverified as
     PROCESS — re-verify counts against the tree before letting it stand as the record.
+  session: nas-file-sorter-009
+  confidence: verified
+
+- id: 2026-10-03-guard-that-checks-presence-only-is-vacuous
+  domain: testing/guards
+  root_cause: >
+    The FIRST version of the Rich-escape lint guard collected only those AST statements
+    that ALREADY contained `escape(`, then asserted escape() was present in each one. That
+    direction is vacuous with respect to the regression it exists to catch: DELETING an
+    escape() call removes the statement from the collected set entirely, so the assertion
+    never sees it. PROVEN, not argued — stripping `escape(` from the gate's tgt_rel left
+    the whole suite FULLY GREEN, i.e. the guard passed on the exact defect it was written
+    to prevent. The failure is structural, not a typo: "enumerate the instances of a
+    property, then assert the property holds" can only ever fire when a NEW bad instance
+    is added that still matches the collection predicate — which, when the predicate IS
+    the property, is unreachable. Enumeration and assertion must use DIFFERENT predicates.
+  prevention: >
+    (1) Invert the direction: collect the MANDATED call sites (every console.print /
+    Table.add_row) from the AST, THEN assert each one escapes its user data. The
+    collection predicate must be able to select a violating instance.
+    (2) MUTATION-PROBE every guard before trusting it: remove the property it claims to
+    enforce and confirm the suite goes RED. The fixed guard was validated 7/7 mutations
+    caught with the control green. A guard that has never been OBSERVED FAILING is not
+    evidence of anything — same class as an undriven branch (see
+    2026-10-03-lazy-import-bound-in-wrong-function) and as
+    2026-10-03-vacuity-fix-creates-new-vacuity, where a PARTIAL fix was still vacuous.
+    (3) Treat "the suite is green" after a deliberate break as a FAILED experiment that
+    succeeded; never as evidence the break was harmless.
   session: nas-file-sorter-009
   confidence: verified
