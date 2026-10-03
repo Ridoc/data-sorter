@@ -243,6 +243,40 @@ ENTRIES:
       If any tool must read these, add an explicit parse assertion that FAILS LOUDLY
       rather than defaulting to an empty list.
 
+  - id: memory-tree-half-not-machine-readable
+    description: >
+      11 of the 15 files in .docs/ fail yaml.safe_load: every session-log-001..010
+      and the 2026-09-17 design doc. They use a prose + '---'-separated house
+      format that is not valid YAML (unquoted parenthetical keys, values holding a
+      bare ': '). Only index.yaml, lessons.yaml, resolved.yaml and tech-debt.yaml
+      parse. Verified by iterating every .docs/**/*.yaml with safe_load.
+      This is the same defect class as plan-spec-yaml-not-machine-parseable, and
+      it sits on THIS repo's own memory tree, not a side directory.
+    location: ".docs/session-log-001..010.yaml, .docs/2026-09-17-nas-file-sorter-design.yaml"
+    status: open
+    confidence: verified
+    session: nas-file-sorter-010
+    risk_assessment: >
+      Silent-failure risk is the whole problem: a tool that enumerates sessions and
+      returns [] on a parse error is INDISTINGUISHABLE from 'no sessions exist'.
+      Any future analytics over the memory tree (how often does X regress? which
+      lessons keep recurring?) silently sees an empty dataset and reports nothing
+      wrong. The entry point is already written (index.yaml routes by filename), so
+      this is a latent trap, not a hypothetical.
+    fix_hint: >
+      Two honest options, pick one deliberately:
+      (a) CONVERT the 11 files to real YAML (quote keys, block scalars for values
+          containing ': ', nest the prose). Preserves tooling; costs a one-time
+          mechanical pass plus a re-read of each file's meaning.
+      (b) DECLARE the format — rename to .md, keep prose, and stop calling the
+          directory machine-readable. Cheapest, honest, but forfeits enumeration.
+      Do NOT leave it as-is and then write a parser against it.
+    prevention: >
+      Any tool reading .docs MUST fail loudly on a parse error; never default to an
+      empty list. A cheap CI-shaped guard: assert that every file in .docs/ parses,
+      or that a `.docs/FORMAT` marker names the convention and is checked.
+
+
 TOOLING_NOTES:
   - id: memory-leaf-validate-on-write
     scope: agent-memory-hygiene
