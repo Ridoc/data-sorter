@@ -454,3 +454,31 @@
 
 # NOTE: do NOT strip date/provenance. Do NOT delete while open risk remains.
 # Consolidate: scan for dup root_cause -> MERGE, keep LATEST prevention.
+
+- id: 2026-10-03-lazy-import-bound-in-wrong-function
+  domain: correctness/runtime
+  root_cause: >
+    The fix for 2026-10-03-markup-eats-user-strings first hoisted ONE
+    `from rich.markup import escape` into main(), but three escape() call sites live in
+    _classify_with_progress (sort.py:580-658) — a DIFFERENT function. Python resolves a
+    function-local import at RUNTIME per scope, so main()'s binding is invisible there
+    and the file raised UnboundLocalError the moment that listing rendered. The 528-test
+    suite stayed GREEN because NOTHING drives that display branch (verified: zero
+    references to _classify_with_progress anywhere in tests/). Generalisable trap: a
+    lazily-imported name bound in the wrong function is a defect with NO syntactic
+    signature — no linter, no type error and no test can see it unless the coverage
+    already exists. Also not a bug to "fix" by hoisting: sort.py deliberately keeps
+    `rich` OUT of module scope (lazy imports by design; verified zero module-level rich
+    imports), so the correct binding is per-function.
+  prevention: >
+    (1) When a module uses per-function lazy imports, add a STATIC AST guard asserting
+    every function that references a lazily-imported name also contains its import —
+    this is what caught it, and it runs without executing the branch. (2) NEVER read
+    "tests pass" as evidence a branch is correct; first ask what DRIVES it. An undriven
+    branch is untested no matter how green the suite is. (3) Do not "repair" a
+    lazy-import module by hoisting imports to module level — that trades a startup cost
+    for a global dependency and contradicts the file's design. (4) After a site-by-site
+    sweep the sweep itself needs a guard (tech-debt
+    rich-escape-sweep-manual-no-lint-guard); hand-audited fixes decay one edit later.
+  session: nas-file-sorter-009
+  confidence: verified

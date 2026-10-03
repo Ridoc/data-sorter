@@ -110,3 +110,44 @@ modified: .docs/index.yaml                 # SESSION_LOG 008->009, +TOOLING rout
 left_dirty_on_purpose: AGENTS.md, README.md   # 514 -> 528 count bumps made in the working
       tree; NOT committed by session-close (this sync commits .docs/** only). Whoever owns
       the next commit must include them or the docs stay stale.
+
+## ── FOLLOW-UP (commit 76dc175, pushed as b3fd888) ────────────────────────────
+
+  TRIGGER: >
+    The final qa-tester + security-reviewer gates BOTH passed, and both reported the
+    same new finding independently: the Rich-markup escape fix had been applied ONLY to
+    _confirm_folder_moves. The identical defect was still live at 6 sibling render
+    sites. Shipping a half-applied fix would leave the consent-integrity bug in place.
+
+  FIX (76dc175): >
+    Escaped every name-bearing interpolation in sort.py: file-review listing (~650/652/
+    654), cohesive-folder scan (~849), dissolve listing (~914/917), _Unsorted_Review
+    unit line (~932), pre-gate summary tables (~1125/1127 and the folder-moves table).
+    Proven, not theorised: a folder literally named "[bold]Album" rendered as "Album",
+    because Rich parses bracket pairs as markup.
+
+  REAL BUG FOUND DURING THE FIX (the important one): >
+    escape was first imported only inside main(), but THREE escape() call sites live in
+    _classify_with_progress — a DIFFERENT function. Python resolves names per-function,
+    so this would raise UnboundLocalError the first time that display branch ran. NO
+    test could catch it: grep of tests/ shows _classify_with_progress is referenced by
+    ZERO tests (verified). Caught by a static AST check — every function using escape()
+    must contain "from rich.markup import escape" — then fixed by binding per-function.
+    The project convention is that rich is deliberately NOT imported at module level in
+    sort.py (lazy by design), so per-function binding is the correct form, not a bug.
+
+  VERIFIED: >
+    Suite 528 passed / 0 failed (repeatedly, incl. from the fresh-clone venv).
+    AST guard 3/3 functions safe, 0 violations. No module-level rich import introduced.
+    Gate parse semantics still fail-closed across 30 adversarial inputs (qa-tester).
+    Mutation testing: 10/10 mutations caught, including a dead-copy decoy.
+
+  ALSO IN 76dc175: removed a stray 0-byte .venv/ skeleton at repo root (gitignored) —
+    the exact CIFS Errno 95 failure mode AGENTS.md warns about.
+
+  CORRECTIONS: >
+    tech-debt.yaml: 13 -> 15 open entries (+ rich-escape-sweep-manual-no-lint-guard,
+    + classify-progress-display-branch-untested). An earlier "Total OPEN entries: 12"
+    in this log was itself wrong (actual 13) — same drift class as test-count-stale-in-docs.
+    AGENTS.md OPEN_DEBT: 16 -> 15 (parsed count, not grep).
+  STATUS: MEMORY SYNCED (docs only; sorter NOT run; no user data touched)
