@@ -663,10 +663,19 @@ def _classify_with_progress(
                     og = Path(entry.rel_path).name
                     if Path(suggested).name.lower() != og.lower():
                         detected_lang = "?"
-                        reason = result.get("reason", "")
-                        lang_match = __import__('re').search(r'(detected|language|lang)[:\s]+([a-z]{2})', reason, __import__('re').IGNORECASE)
+                        # WHY this shape: the reason may phrase it as
+                        # "detected language: de" / "language detected: es" /
+                        # "lang en". An unanchored `([a-z]{2})` matched INSIDE the
+                        # next word ("detected la[nguage]") and printed nonsense;
+                        # a bare `\b` rejected real 3-letter ISO-639-2 codes
+                        # ("deu"). Hence: optional leading qualifier, then a
+                        # word-anchored 2-3 char code.
+                        reason_text = result.get("reason", "")
+                        lang_match = re.search(
+                            r'\b(?:(?:language|detected)\s+)?(?:detected|language|lang)'
+                            r'\b[:\s]+([a-z]{2,3})\b', reason_text, re.IGNORECASE)
                         if lang_match:
-                            detected_lang = lang_match.group(2)
+                            detected_lang = lang_match.group(1)
                         console.print(f"     [dim]📝 rename → [green]{escape(suggested)}[/] (lang: {detected_lang})[/]")
 
                 prog.update(task, advance=1)

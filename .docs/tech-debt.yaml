@@ -184,35 +184,65 @@ ENTRIES:
       Note: the count in session-log-009 said "Total OPEN entries: 12"; the true
       pre-existing count was 13. Counts in prose drift exactly like the test count does.
 
-  - id: classify-progress-display-branch-untested
+  - id: classifier-json-repair-breaks-on-nested-braces
     description: >
-      sort.py:_classify_with_progress (L580-712) — the per-file classification listing
-      that renders name → category → confidence for every classified file — is driven by
-      ZERO tests. Verified: no file under tests/ references _classify_with_progress or
-      with_progress. It is the largest undriven display surface in the tool and it
-      carries three escape() call sites.
-    location: "sort.py:580-712 _classify_with_progress; no corresponding tests/"
+      sorter/classifier.py:353 — the LLM-JSON repair path uses re.findall(r'\{[^}]+\}')
+      to recover individual objects when json.loads fails. That pattern cannot match
+      NESTED braces: for a payload like {"a": 1, "b": {"c": 2}, "d": 3} it returns
+      '{"a": 1, "b": {"c": 2}' — a truncated, unbalanced fragment that then fails
+      json.loads again and is silently DROPPED. Any nested object in a model reply
+      (metadata blocks, per-file confidence objects, nested category maps) loses
+      every record after the first nesting level.
+    location: "sorter/classifier.py:340-362 (_extract_json repair path)"
     status: open
     confidence: verified
-    session: nas-file-sorter-009
+    session: nas-file-sorter-010
+    evidence: >
+      Reproduced in isolation: re.findall(r'\{[^}]+\}', '{"a": 1, "b": {"c": 2}, "d": 3}')
+      -> ['{"a": 1, "b": {"c": 2}']. Found by a sibling-audit after the
+      _classify_with_progress regex defect (same defect CLASS: a regex used as a
+      parser where it cannot express the real grammar).
     risk_assessment: >
-      The cost is already realised, not hypothetical: the mis-scoped lazy import shipped
-      through a fully GREEN 528-test suite precisely because this branch never executes
-      in tests. Any future defect here (markup, f-string, NameError) is invisible to QA
-      until a real run reaches it — on a NAS of real family photos, where a rendering
-      crash mid-run is a user-visible failure.
+      Degrades to a dropped classification, not a wrong move — the safer failure
+      direction. But a dropped record means the file is re-classified or lands in
+      review on a later run, and the model error is invisible to the user.
+    fix_hint: >
+      Replace the regex repair with a brace-depth scanner, or fail loudly (surface
+      the unparseable reply) instead of silently returning a short list. Prefer
+      raising: a silent partial parse here is the same failure mode that let the
+      classify-display branch stay untested.
     prevention: >
-      Give this branch a driven test (mock the Ollama client, capture the console output)
-      so escape()/f-string/name-resolution defects inside it fail CI. Its guard half is
-      now BUILT and closed: rich-escape-sweep-manual-no-lint-guard moved to
-      .docs/resolved.yaml at commit 0748fd5. The coverage half (this entry) stays OPEN —
-      a static escape() property guard is not a driven test of the branch.
+      Add a test feeding a NESTED-object reply through _extract_json and assert no
+      record is silently lost. Guard: no re.findall/re.sub regex that stands in for
+      a balanced-delimiter parser.
 
-# ─────────────────────────────────────────────────────────────
-# TOOLING_NOTES — toolchain/environment facts about the AGENT SESSION,
-# NOT defects in the sorter and NOT project lessons. They are here because
-# they cost real work today and will cost it again next session.
-# ─────────────────────────────────────────────────────────────
+  - id: plan-spec-yaml-not-machine-parseable
+    description: >
+      ~/.opencode/plan/plan-spec-*.yaml files use a plain-text house format that is
+      NOT valid YAML: unquoted scalar keys containing parentheses ('PRE-CONDITION
+      (BATCH_1 checks these)') parse as complex keys, and values containing a bare
+      ': ' (e.g. 'GOAL: Close out ... run:') trigger "mapping values are not
+      allowed here". yaml.safe_load() fails on 2 of the 4 active plan files
+      (architect-followup, agent-model-tiers-with-failover-plugin); battlemetrics
+      and hardening-v10 happen to parse. Verified pre-existing: the pristine
+      archive copy fails identically, so this is not edit damage.
+    location: "/home/zeno/.opencode/plan/*.yaml"
+    status: open
+    confidence: verified
+    session: nas-file-sorter-010
+    risk_assessment: >
+      Cosmetic today — plans are read as text by the build agent. Any future tooling
+      that wants to enumerate batches, count [x] marks, or gate on plan completion
+      will silently see zero plans. Note the interaction: a parser that swallows the
+      error and returns [] is indistinguishable from 'no plans exist'.
+    fix_hint: >
+      Pick one: (a) conform to YAML — quote keys, use block scalars for values
+      containing ': '; or (b) declare the format as markdown/INI and stop naming the
+      files .yaml. Do NOT leave it as-is and then write a parser against it.
+    prevention: >
+      If any tool must read these, add an explicit parse assertion that FAILS LOUDLY
+      rather than defaulting to an empty list.
+
 TOOLING_NOTES:
   - id: memory-leaf-validate-on-write
     scope: agent-memory-hygiene
