@@ -9,26 +9,21 @@ PROJECT: "Python 3.11+ CLI that classifies/moves NAS files via local Ollama. Thi
 ## COMMANDS
 
 ```bash
-python3 sort.py --dry-run          # ALWAYS preview first
-python3 sort.py --undo             # rollback last run
-python3 -m pytest tests/ -q        # 482 collected; 12 fail until deps are installed (see below)
+DS=~/.venvs/data-sorter/bin/python     # persistent venv on LOCAL disk
+
+$DS sort.py --dry-run         # ALWAYS preview first
+$DS sort.py --undo            # rollback last run
+$DS -m pytest tests/ -q       # 490 passed, 0 failed
 ```
 
-NO_VENV: >
-  Use the system `python3` directly. Do NOT create a virtualenv for this repo —
-  the NAS filesystem rejects symlinks, so `python3 -m venv .venv` produces a broken
-  env with no `bin/python`.
-
-DEPS: >
-  As of 2026-10-03 the system interpreter is INCOMPLETE — `magic`, `questionary`,
-  `imagehash`, `sklearn`, `markitdown` are missing, causing 12 pre-existing test
-  failures (test_reviewer, test_scanner, embeddings). Fix once with:
-  `python3 -m pip install -r requirements.txt` (no sudo). Re-run the suite and
-  update this line + the README test count to match reality.
-
-BASELINE: >
-  The 12 failures are NOT a regression — they reproduce on a clean checkout.
-  Do not "fix" them by editing tests; install the deps.
+WHY_THIS_VENV: >
+  The project dir is a CIFS mount (`//192.168.1.200/Zeno`) that does NOT support
+  symlinks — `python3 -m venv .venv` fails with `Errno 95` on the `lib64 -> lib`
+  link, even with `--copies`. Never create a venv inside this repo.
+  The venv lives at `~/.venvs/data-sorter` on local btrfs and persists across
+  reboots. (An older `/tmp/data-sorter-venv` vanished because /tmp is tmpfs.)
+  System `python3` is NOT usable: it lacks `magic`, `questionary`, `imagehash`,
+  `sklearn`, `markitdown` — 12 tests fail there.
 
 ## SAFETY_INVARIANTS
 
@@ -89,4 +84,6 @@ Do not claim Design routing works until it has been dry-run on real data.
 ## GOTCHAS
 
 - `.sortignore` excludes `OpenCode/`, `.git/`, `.Trash-*`, `@eaDir` — never scan those.
+- Add `-p no:cacheprovider` to pytest: the CIFS mount rejects pytest's cache writes
+  (`Errno 1`), which emits a spurious PytestCacheWarning on every run.
 - Design Doc in README is the only human-facing spec; keep it in sync with `sorter/`.

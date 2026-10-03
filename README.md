@@ -8,14 +8,16 @@ Organize your NAS files using a local LLM (Ollama). Scans, classifies, reviews, 
 # Prerequisites
 ollama pull qwen2.5-coder:7b     # or use any model you prefer
 
+DS=~/.venvs/data-sorter/bin/python   # venv lives on LOCAL disk (see Installation)
+
 # Run the sorter (dry-run first!)
-python3 sort.py --dry-run         # Preview changes without moving anything
+$DS sort.py --dry-run          # Preview changes without moving anything
 
 # Full run (interactive review → execute)
-python3 sort.py
+$DS sort.py
 
 # Undo the last sort
-python3 sort.py --undo
+$DS sort.py --undo
 ```
 
 ## How It Works
@@ -53,16 +55,16 @@ python3 sort.py --undo
 # Clone / enter the project directory
 cd /mnt/NAS-Zeno/OpenCode/Data\ Sorter
 
-# Use the system python3 — all dependencies are already installed.
-# Do NOT create a virtualenv: the NAS filesystem rejects symlinks, so
-# `python3 -m venv` yields a broken env with no bin/python.
+# Use a venv on LOCAL disk — never inside this repo.
+# This dir is a CIFS mount that rejects symlinks, so `python3 -m venv .venv`
+# fails with Errno 95 on the lib64 -> lib link (even with --copies).
+python3 -m venv ~/.venvs/data-sorter
+~/.venvs/data-sorter/bin/pip install -r requirements.txt
 
-# Verify the install
-python3 -m pytest tests/ -q
-python3 sort.py --help
+# Verify
+~/.venvs/data-sorter/bin/python -m pytest tests/ -q
+~/.venvs/data-sorter/bin/python sort.py --help
 ```
-
-To reinstall dependencies: `python3 -m pip install -r requirements.txt`
 
 ### Dependencies
 
@@ -76,12 +78,12 @@ To reinstall dependencies: `python3 -m pip install -r requirements.txt`
 
 | Command | Description |
 |---------|-------------|
-| `python sort.py` | Dry run → interactive review → execute |
-| `python sort.py --dry-run` | Preview only, no changes |
-| `python sort.py --undo` | Revert the last sort run |
-| `python sort.py --execute` | Skip interactive review (auto-accept) |
-| `python sort.py --path Subfolder` | Scan only a sub-path |
-| `python sort.py --config my.yaml` | Use alternate config |
+| `$DS sort.py` | Dry run → interactive review → execute |
+| `$DS sort.py --dry-run` | Preview only, no changes |
+| `$DS sort.py --undo` | Revert the last sort run |
+| `$DS sort.py --execute` | Skip interactive review (auto-accept) |
+| `$DS sort.py --path Subfolder` | Scan only a sub-path |
+| `$DS sort.py --config my.yaml` | Use alternate config |
 
 ## Configuration
 
@@ -158,12 +160,10 @@ LLM can propose new subfolders under any top-level category if no existing one f
 ## Testing
 
 ```bash
-python3 -m pytest tests/ -v
+~/.venvs/data-sorter/bin/python -m pytest tests/ -v
 ```
 
-482 tests collected. **12 fail on a clean checkout** until the missing deps are installed:
-`magic`, `questionary`, `imagehash`, `sklearn`, `markitdown`. Run
-`python3 -m pip install -r requirements.txt` to get a green suite.
+490 tests, all passing.
 
 ## Architecture
 
