@@ -13,7 +13,7 @@ DS=~/.venvs/data-sorter/bin/python     # persistent venv on LOCAL disk
 
 $DS sort.py --dry-run         # ALWAYS preview first
 $DS sort.py --undo            # rollback last run
-$DS -m pytest tests/ -q       # 514 passed, 0 failed
+$DS -m pytest tests/ -q -p no:cacheprovider   # 514 passed, 0 failed
 ```
 
 WHY_THIS_VENV: >

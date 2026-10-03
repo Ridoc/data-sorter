@@ -61,8 +61,8 @@ cd /mnt/NAS-Zeno/OpenCode/Data\ Sorter
 python3 -m venv ~/.venvs/data-sorter
 ~/.venvs/data-sorter/bin/pip install -r requirements.txt
 
-# Verify
-~/.venvs/data-sorter/bin/python -m pytest tests/ -q
+# Verify (-p no:cacheprovider: this dir is a CIFS mount that rejects pytest's cache writes)
+~/.venvs/data-sorter/bin/python -m pytest tests/ -q -p no:cacheprovider
 ~/.venvs/data-sorter/bin/python sort.py --help
 ```
 
@@ -81,7 +81,7 @@ python3 -m venv ~/.venvs/data-sorter
 | `$DS sort.py` | Dry run → interactive review → execute |
 | `$DS sort.py --dry-run` | Preview only, no changes |
 | `$DS sort.py --undo` | Revert the last sort run |
-| `$DS sort.py --execute` | Skip interactive review (auto-accept) |
+| `$DS sort.py --execute` | Skip interactive review; derived/review moves are never auto-applied |
 | `$DS sort.py --path Subfolder` | Scan only a sub-path |
 | `$DS sort.py --config my.yaml` | Use alternate config |
 
@@ -160,7 +160,7 @@ LLM can propose new subfolders under any top-level category if no existing one f
 ## Testing
 
 ```bash
-~/.venvs/data-sorter/bin/python -m pytest tests/ -v
+~/.venvs/data-sorter/bin/python -m pytest tests/ -v -p no:cacheprovider
 ```
 
 514 tests, all passing.
