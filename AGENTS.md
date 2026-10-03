@@ -74,7 +74,7 @@ OPEN_DEBT: 16 open items in `.docs/tech-debt.yaml`; RESOLVED items live in
 `.docs/resolved.yaml` (dead `retry_attempts` config, folder-confirm gate coverage,
 and Design routing — the last now VERIFIED live via a 3273-file dry-run).
 Suite baseline is 0 failures; the old "12 pre-existing failures" were missing deps in
-the wrong interpreter, not real failures. Latest session: `session-log-008.yaml`.
+the wrong interpreter, not real failures. Latest session: `session-log-009.yaml`.
 
 SAFETY NOTE (2026-10-03): `--undo` after a dissolve once WOULD have relocated the whole
 `Media/Photos` library. Folder-level ops now emit PER-FILE undo rows and `reverse_move`
