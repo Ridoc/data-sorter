@@ -163,7 +163,7 @@ LLM can propose new subfolders under any top-level category if no existing one f
 ~/.venvs/data-sorter/bin/python -m pytest tests/ -v -p no:cacheprovider
 ```
 
-528 tests, all passing.
+545 tests, all passing.
 
 ## Architecture
 
