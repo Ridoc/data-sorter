@@ -214,6 +214,15 @@ def _taxonomy_prefix(cat_path: str, tax_dict: Dict) -> str:
     return "/".join(kept)
 
 
+def _leaf_beyond(cat_path: str, tax_dict: Dict) -> str:
+    """Destination leaf the model added past the taxonomy (e.g. "Zeno" from
+    "Media/Photos/Zeno"); "" when it added none or only pasted ancestry."""
+    prefix = _taxonomy_prefix(cat_path, tax_dict)
+    segs = [s for s in (cat_path or "").replace("\\", "/").split("/") if s]
+    extra = segs[len(prefix.split("/")):] if prefix else segs
+    return extra[-1] if extra else ""
+
+
 def _apply_medium_word_naming(folder_entry: Dict, classification: Dict, tax_dict: Dict) -> None:
     """Name the destination for medium-word folders, deterministically. In-place.
 
@@ -272,6 +281,33 @@ def _apply_medium_word_naming(folder_entry: Dict, classification: Dict, tax_dict
         classification["category_path"] = prefix
         classification["own_target"] = False
         classification["dissolve"] = True
+    # Our name, not the model's verdict. Cap the confidence so it lands in the
+    # review band (>= require_review, < auto_accept) instead of auto-applying at
+    # the model's own 85%, and flag it so --execute never approves it silently.
+    classification["_derived"] = True
+    classification["confidence"] = min(int(classification.get("confidence", 0) or 0), 70)
+
+
+_MEDIUM_HINT_RE = re.compile(
+    r"\b(bilder?|bild|fotos?|photos?|pics?|images?|screens?|grafiken?)\b", re.IGNORECASE)
+
+
+def warn_medium_like_unmatched(folder_entries: List[Dict]) -> int:
+    """Surface folder names that LOOK medium-word but missed the exact match.
+
+    WHY: is_medium_word_name is an exact-shape gate. "Bilder (alt)" or "meine
+    bilder" fall through it and silently keep the old (wrong) routing, with no
+    sign that the naming rules never ran. Counted here so the gap is visible.
+    """
+    from sorter.folder_classifier import is_medium_word_name
+    hits = 0
+    for fe in folder_entries:
+        name = Path(fe.get("path", "")).name
+        if _MEDIUM_HINT_RE.search(name) and not is_medium_word_name(name):
+            print(f"     ⚠️ medium-like name not matched by naming rules: {name}",
+                  file=sys.stderr)
+            hits += 1
+    return hits
 
 
 def _build_folder_prompt(entries_str: str, taxonomy_str: str) -> str:
@@ -433,12 +469,28 @@ def _classify_folders(
         )
         replaced = 0
         for i, r in zip(med_idx, refined):
-            if r.get("category_path") != "_Unsorted_Review":
-                ordered[i] = r
-                replaced += 1
+            if r.get("category_path") == "_Unsorted_Review":
+                continue
+            # The re-ask exists to refine the NAME. It must not silently re-route:
+            # a naming prompt has a 15x smaller batch and therefore a weaker view of
+            # the taxonomy than the main pass. Keep the first pass's category and
+            # borrow only a leaf that belongs to that same category.
+            old_prefix = _taxonomy_prefix(ordered[i].get("category_path", ""), taxonomy)
+            new_prefix = _taxonomy_prefix(r.get("category_path", ""), taxonomy)
+            if new_prefix != old_prefix:
+                leaf = _leaf_beyond(r.get("category_path", ""), taxonomy)
+                print(f"     ⚠️ category disagreement, kept first pass: "
+                      f"{folder_entries[i]['path']} "
+                      f"({old_prefix or '?'} vs {new_prefix or '?'})", file=sys.stderr)
+                r = dict(r)
+                r["category_path"] = f"{old_prefix}/{leaf}" if (old_prefix and leaf) else old_prefix
+                r["_category_conflict"] = True
+            ordered[i] = r
+            replaced += 1
         if replaced:
             print(f"     🔁 refined {replaced}/{len(med_idx)} medium-word folder names",
                   file=sys.stderr)
+    warn_medium_like_unmatched(folder_entries)
 
     # ── Dominant-type fallback (LLM-failure only) ──
     # Runs AFTER re-keying so it also covers folders the LLM never answered
@@ -795,6 +847,8 @@ Examples:
         _apply_medium_word_naming(fe, fc, tax_dict)
 
         move = resolve_folder_move(fe, fc, nas_root)
+        if move:
+            move["_derived"] = fc.get("_derived", False)
         if move and fc.get("confidence", 0) >= cfg.get("confidence", {}).get("require_review", 50):
             if fc.get("dissolve"):
                 # Medium-word folder ("bilder&screens"): drop it into the category
@@ -1068,7 +1122,8 @@ Examples:
             # Display target relative to nas_root
             tgt_rel = str(Path(tgt).relative_to(nas_root)) if tgt else "?"
             is_review = fm.get("confidence", 0) == 0
-            prefix = "⚠️ [REVIEW] " if is_review else ""
+            # Our naming, not the model's verdict — must be eyeballed before it moves.
+            prefix = "⚠️ [REVIEW] " if is_review else ("⚠️ [derived] " if fm.get("_derived") else "")
             console.print(
                 f"  [{idx}] {prefix}[cyan]{Path(src).relative_to(nas_root)}[/] → [green]{tgt_rel}[/] "
                 f"({fcount} files, {size_str}) [dim]conf={fm.get('confidence',0)}%[/]"
@@ -1096,7 +1151,8 @@ Examples:
         # (failed/uncertain folders, confidence 0) must NOT be moved silently
         # — they exist for the user to review as a unit.
         approved_folder_moves = [
-            fm for fm in approved_folder_moves if fm.get("confidence", 0) > 0
+            fm for fm in approved_folder_moves
+                if fm.get("confidence", 0) > 0 and not fm.get("_derived", False)
         ]
 
     # ── Proceed prompt or auto-execute ──
@@ -1113,6 +1169,9 @@ Examples:
         fm.get("file_count", 0) for fm in approved_folder_moves
         if fm.get("confidence", 0) == 0
     )
+    derived_folder_count = sum(
+        1 for fm in approved_folder_moves if fm.get("_derived")
+    )
     total_moves = file_move_count + folder_move_count
     total_deletions = sum(1 for c in all_classifications
                           if c.get("action") == "delete" or
@@ -1125,7 +1184,9 @@ Examples:
     if not args.dry_run and not args.execute:
         try:
             review_note = f" (+{review_folder_count} to _Unsorted_Review review)" if review_folder_count else ""
-            resp = input(f"\n[bold]READY TO MOVE {total_moves} FILES?{review_note}"
+            derived_note = (f" (+{derived_folder_count} auto-named — not auto-applied under --execute)"
+                            if derived_folder_count else "")
+            resp = input(f"\n[bold]READY TO MOVE {total_moves} FILES?{review_note}{derived_note}"
                          f"{' (+delete ' + str(total_deletions) + ')' if total_deletions else ''} [Y/n]: ")
             if resp.lower() in ("n", "no"):
                 console.print("[yellow]Aborted by user.[/]")

@@ -75,6 +75,66 @@ class TestRefinementPass:
         # Subjective folders keep their original verdict
         assert by_path["D/BO Logo"]["category_path"] == "Media/Photos"
 
+    def test_refine_category_disagreement_keeps_first_pass(self, monkeypatch):
+        """The re-ask refines the NAME. It must not silently re-route a folder:
+        a 15x smaller batch has a weaker view of the taxonomy than the main pass."""
+        import sort as sort_mod
+        from sorter.classifier import OllamaClient
+
+        names = ["BO Logo", "zenos bilder"]
+        entries = self._entries(names)
+        calls = []
+
+        def fake_call(self, prompt):
+            calls.append(prompt)
+            if len(calls) == 1:          # main pass: plain verdicts
+                return json.dumps([
+                    {"path": "D/BO Logo", "category_path": "Media/Photos",
+                     "confidence": 85, "reason": "x"},
+                    {"path": "D/zenos bilder", "category_path": "Media/Photos",
+                     "confidence": 85, "reason": "x"}])
+            # refinement: re-routes to a DIFFERENT category
+            return json.dumps([
+                {"path": "D/zenos bilder", "category_path": "Zeno/Documents/Design",
+                 "confidence": 85, "reason": "design?", "own_target": True}])
+
+        monkeypatch.setattr(OllamaClient, "_call_ollama", fake_call)
+        out = sort_mod._classify_folders(
+            entries, Path("config.yaml"), {"ollama": {"batch_size": 15}}, "tax")
+
+        by_path = {r["path"]: r for r in out}
+        assert by_path["D/zenos bilder"]["category_path"].startswith("Media/Photos"), \
+            f"category must not be re-routed by a naming pass: {by_path['D/zenos bilder']['category_path']}"
+        assert by_path["D/zenos bilder"].get("_category_conflict") is True
+
+    def test_refine_same_category_leaf_is_accepted(self, monkeypatch):
+        """No disagreement -> the refined leaf is kept (the existing behaviour)."""
+        import sort as sort_mod
+        from sorter.classifier import OllamaClient
+
+        entries = self._entries(["BO Logo", "zenos bilder"])
+        calls = []
+
+        def fake_call(self, prompt):
+            calls.append(prompt)
+            if len(calls) == 1:
+                return json.dumps([
+                    {"path": "D/BO Logo", "category_path": "Media/Photos",
+                     "confidence": 85, "reason": "x"},
+                    {"path": "D/zenos bilder", "category_path": "Media/Photos",
+                     "confidence": 85, "reason": "x"}])
+            return json.dumps([
+                {"path": "D/zenos bilder", "category_path": "Media/Photos/Zeno",
+                 "confidence": 85, "reason": "owner", "own_target": True}])
+
+        monkeypatch.setattr(OllamaClient, "_call_ollama", fake_call)
+        out = sort_mod._classify_folders(
+            entries, Path("config.yaml"), {"ollama": {"batch_size": 15}}, "tax")
+
+        by_path = {r["path"]: r for r in out}
+        assert by_path["D/zenos bilder"]["category_path"] == "Media/Photos/Zeno"
+        assert "_category_conflict" not in by_path["D/zenos bilder"]
+
     def test_refined_review_answer_does_not_overwrite(self, monkeypatch):
         """A refinement that abstains must not clobber a working verdict."""
         import sort as sort_mod
