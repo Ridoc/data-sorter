@@ -13,7 +13,7 @@ DS=~/.venvs/data-sorter/bin/python     # persistent venv on LOCAL disk
 
 $DS sort.py --dry-run         # ALWAYS preview first
 $DS sort.py --undo            # rollback last run
-$DS -m pytest tests/ -q -p no:cacheprovider   # 554 passed, 0 failed
+$DS -m pytest tests/ -q -p no:cacheprovider   # 562 passed, 0 failed
 ```
 
 WHY_THIS_VENV: >
@@ -86,7 +86,7 @@ held user data.
 
 | Trigger | Agent | Command |
 |---|---|---|
-| AFTER every code change | qa-tester | `$DS -m pytest tests/ -q -p no:cacheprovider` (expect 554) |
+| AFTER every code change | qa-tester | `$DS -m pytest tests/ -q -p no:cacheprovider` (expect 562) |
 | diff touches delete/move/symlink/routing | security-reviewer | review data-loss surface |
 | END of every session | session-close | sync `.docs/**` + commit |
 
