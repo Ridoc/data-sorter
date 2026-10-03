@@ -9,13 +9,13 @@ Organize your NAS files using a local LLM (Ollama). Scans, classifies, reviews, 
 ollama pull qwen2.5-coder:7b     # or use any model you prefer
 
 # Run the sorter (dry-run first!)
-python sort.py --dry-run          # Preview changes without moving anything
+python3 sort.py --dry-run         # Preview changes without moving anything
 
 # Full run (interactive review → execute)
-python sort.py
+python3 sort.py
 
 # Undo the last sort
-python sort.py --undo
+python3 sort.py --undo
 ```
 
 ## How It Works
@@ -53,13 +53,16 @@ python sort.py --undo
 # Clone / enter the project directory
 cd /mnt/NAS-Zeno/OpenCode/Data\ Sorter
 
-# Create virtual environment (NAS may not support symlinks)
-python3 -m venv /tmp/data-sorter-venv
-/tmp/data-sorter-venv/bin/pip install -r requirements.txt
+# Use the system python3 — all dependencies are already installed.
+# Do NOT create a virtualenv: the NAS filesystem rejects symlinks, so
+# `python3 -m venv` yields a broken env with no bin/python.
 
-# Run with venv python
-/tmp/data-sorter-venv/bin/python sort.py --help
+# Verify the install
+python3 -m pytest tests/ -q
+python3 sort.py --help
 ```
+
+To reinstall dependencies: `python3 -m pip install -r requirements.txt`
 
 ### Dependencies
 
@@ -155,10 +158,12 @@ LLM can propose new subfolders under any top-level category if no existing one f
 ## Testing
 
 ```bash
-/tmp/data-sorter-venv/bin/python -m pytest tests/ -v
+python3 -m pytest tests/ -v
 ```
 
-344 tests covering all modules (incl. 5 delete-protection + 7 3D/dictation routing tests + 2 Design taxonomy tests).
+482 tests collected. **12 fail on a clean checkout** until the missing deps are installed:
+`magic`, `questionary`, `imagehash`, `sklearn`, `markitdown`. Run
+`python3 -m pip install -r requirements.txt` to get a green suite.
 
 ## Architecture
 
