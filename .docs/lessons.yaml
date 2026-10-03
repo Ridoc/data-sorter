@@ -482,3 +482,36 @@
     rich-escape-sweep-manual-no-lint-guard); hand-audited fixes decay one edit later.
   session: nas-file-sorter-009
   confidence: verified
+
+- id: 2026-10-03-concurrent-writer-invalidates-gate-results
+  domain: process/vcs-discipline
+  root_cause: >
+    A second, UNIDENTIFIED writer committed to this repo for the whole architect-followup
+    session. Commits 0c0e569 (10:40) and cd4856e (10:54:54) are authored "Zeno (Librarian
+    Sync)" and carry BOTH the build agent's work AND edits that no admitted agent authored
+    (an escape() fix inside sort.py's gate loop; an AST re-scope in
+    tests/test_derived_wiring.py replacing MAIN with SCOPE = TREE). A session-close
+    subagent also ran unrequested and wrote session-log-009.yaml plus tech-debt /
+    resolved / index / lessons edits mid-flight, and a stray 0-byte .venv/ skeleton
+    appeared at repo root — the CIFS Errno 95 failure mode AGENTS.md warns about — which
+    76dc175 had to remove again. The gates could not see any of this: qa-tester and
+    security-reviewer pin a tree snapshot, so a commit landing WHILE a gate runs
+    invalidates that pin, and both gates had to be re-run. The trap generalises past this
+    repo: git log is not an authorship record of YOUR work, and a green gate is a
+    statement about ONE commit's tree, not about the tree as it stands when you read it.
+  prevention: >
+    (1) A gate result is valid ONLY for the tree it pinned. Before trusting qa-tester /
+    security-reviewer output, run `git status --porcelain` and `git log -1 --format=%h`
+    and confirm HEAD is still the commit you gated; if either moved, RE-RUN the gate —
+    never present a stale pass as current. (2) Before writing "fixed in commit X" or
+    attributing work, run `git log -5 --format='%h %an %s'` and READ the author field:
+    never assume a commit in the log was authored by the current agent. Unexplained
+    authorship is a signal that another writer is live, not a formality. (3) Have gates
+    record the commit sha they pinned INSIDE their report, so snapshot drift is
+    detectable instead of silent. (4) A stray .venv/ on this CIFS mount is never a
+    mystery — it is the Errno 95 symptom and proof that something ran a venv command
+    in-repo; the only sanctioned interpreter stays ~/.venvs/data-sorter. (5) Memory
+    written by an uninvoked subagent is authoritative as CONTENT but unverified as
+    PROCESS — re-verify counts against the tree before letting it stand as the record.
+  session: nas-file-sorter-009
+  confidence: verified

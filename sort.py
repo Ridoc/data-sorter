@@ -16,6 +16,7 @@ import re
 import argparse
 from pathlib import Path
 from typing import List, Dict, Optional
+from rich.markup import escape
 
 # ---------------------------------------------------------------------------
 # Config / paths
@@ -585,7 +586,6 @@ def _classify_with_progress(
     
     Shows analyzing progress bar + per-file results as each batch completes.
     """
-    from rich.markup import escape
     from sorter.classifier import OllamaClient
     from sorter.taxonomy import get_taxonomy_yaml_string, resolve_category, load_taxonomy
 
@@ -667,7 +667,7 @@ def _classify_with_progress(
                         lang_match = __import__('re').search(r'(detected|language|lang)[:\s]+([a-z]{2})', reason, __import__('re').IGNORECASE)
                         if lang_match:
                             detected_lang = lang_match.group(2)
-                        console.print(f"     [dim]📝 rename → [green]{suggested}[/] (lang: {detected_lang})[/]")
+                        console.print(f"     [dim]📝 rename → [green]{escape(suggested)}[/] (lang: {detected_lang})[/]")
 
                 prog.update(task, advance=1)
                 done += 1
@@ -731,7 +731,6 @@ def _confirm_folder_moves(approved_folder_moves: List[Dict], nas_root: Path, con
     # Local import (rich is deliberately not imported at module level), hoisted out
     # of the loop: escape() is required because every bracket pair below is Rich
     # MARKUP, so a folder named "[bold]X" would otherwise render as altered text.
-    from rich.markup import escape
     from sorter.deduper import DedupScanner
 
     console.print("\n[bold]📁 Folder moves require confirmation:[/]")
@@ -819,7 +818,6 @@ Examples:
         return 0
 
     from rich.console import Console
-    from rich.markup import escape
     from rich.progress import (Progress, SpinnerColumn, TextColumn,
                                BarColumn, TimeElapsedColumn)
     console = Console()

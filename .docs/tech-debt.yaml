@@ -292,3 +292,24 @@ TOOLING_NOTES:
       Agent memory written this session lives ONLY in .docs/**. Do not assume anything
       from the hindsight bank for work after 2026-09-30.
 
+
+  - id: concurrent-writer-silent-actor
+    scope: agent-toolchain
+    status: STILL ACTIVE — re-observed 11:19:07 during the closing sync itself
+    fact: >
+      An unidentified actor committed to this repo for the whole architect-followup
+      session: 0c0e569 (10:40) and cd4856e (10:54) are authored "Zeno (Librarian Sync)"
+      and contain edits no admitted agent made. A session-close subagent also ran
+      unrequested and wrote .docs/ mid-flight. IT WAS NOT SAFE TO CALL THIS OVER: at
+      11:19:07, while the closing session-close sync was in progress, sort.py was
+      modified in the working tree again — an UNCOMMITTED edit hoisting
+      `from rich.markup import escape` to module scope and deleting the per-function
+      imports, i.e. reverting the fix behind lesson
+      2026-10-03-lazy-import-bound-in-wrong-function. Suite still green (528), so
+      nothing flagged it.
+    see_lessons: 2026-10-03-concurrent-writer-invalidates-gate-results  # why + full rule
+    prevention: >
+      Gate output is valid only for a pinned tree. Always record the commit sha a gate
+      evaluated, and re-check `git status --porcelain` + HEAD before trusting a pass.
+      Read the author in `git log -5 --format='%h %an %s'` before attributing any commit
+      to your own work.

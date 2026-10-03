@@ -5,6 +5,8 @@ date: 2026-10-03
 session_type: "folder-confirm gate extraction + coverage; Rich-markup warning bug; dead config removal"
 agent: session-close
 code_commit: cd4856e   # already committed AND pushed before this sync
+plan_spec: plan-spec-architect-followup.yaml   # ARCHIVED (all 4 batches [x]; deleted from
+#   repo root per lifecycle, kept in ~/.opencode/plan/archive/ + git history)
 ---
 # FACT_ACCT: {
 #   added:    session-log-009.yaml (this file), 3 lessons, 3 tech-debt entries,
@@ -151,3 +153,62 @@ left_dirty_on_purpose: AGENTS.md, README.md   # 514 -> 528 count bumps made in t
     in this log was itself wrong (actual 13) — same drift class as test-count-stale-in-docs.
     AGENTS.md OPEN_DEBT: 16 -> 15 (parsed count, not grep).
   STATUS: MEMORY SYNCED (docs only; sorter NOT run; no user data touched)
+
+## ── CONCURRENT WRITER (highest-severity finding of the session) ────────────────
+
+  STATUS: >
+    An UNIDENTIFIED actor was editing and committing this repository concurrently for the
+    entire session. Nothing below is speculation: every item was read out of `git log`
+    author fields and the tree itself.
+
+  WHAT HAPPENED
+    1. Commits 0c0e569 (10:40:26) and cd4856e (10:54:54) are authored
+       "Zeno (Librarian Sync)". They contain the build agent's own work AND edits NO
+       admitted agent authored: an escape() fix inside sort.py's gate loop, and an AST
+       re-scope in tests/test_derived_wiring.py replacing MAIN with SCOPE = TREE.
+    2. A session-close subagent ran WITHOUT being asked and wrote session-log-009.yaml
+       plus tech-debt / resolved / index / lessons edits mid-flight.
+    3. A stray 0-byte .venv/ skeleton appeared at repo root — the CIFS Errno 95 failure
+       mode AGENTS.md warns about, with no agent admitting to creating it. 76dc175
+       removed it again.
+
+  GATE CONSEQUENCE
+    qa-tester and security-reviewer pin a tree snapshot. A commit landing WHILE a gate is
+    running invalidates that pin, so BOTH gates had to be re-run. Neither gate reported
+    the concurrent writer on its own — they were structurally unable to.
+
+  LESSON: 2026-10-03-concurrent-writer-invalidates-gate-results   # appended to lessons.yaml
+  TOOLING_NOTES: concurrent-writer-silent-actor                    # terse runbook rule
+
+  PREVENTION (one line): a gate pass is a claim about ONE pinned commit's tree — verify
+    `git status` + HEAD still match before trusting it, and read commit authorship with
+    `git log -5 --format='%h %an %s'` before attributing any commit to your own work.
+
+  STATUS: MEMORY SYNCED (docs only; sorter NOT run; no user data touched; HEAD not rewritten)
+
+## ── CONCURRENT WRITER — RE-OBSERVED DURING THIS VERY SYNC ───────────────────────
+
+  OBSERVED_AT: 2026-10-03 11:19:07 (while this closing session-close was mid-sync)
+
+  WHAT: >
+    `git status` at the end of this sync showed sort.py MODIFIED — an edit this agent
+    did not make and did not author. The diff hoists `from rich.markup import escape`
+    to module scope and deletes the per-function imports from _classify_with_progress,
+    _confirm_folder_moves and main(). That is a DIRECT REVERT of the fix behind lesson
+    2026-10-03-lazy-import-bound-in-wrong-function, whose prevention (3) says
+    explicitly: do not "repair" a lazy-import module by hoisting to module level.
+
+  NOT_FLAGGED_BY_ANYTHING: >
+    The suite stayed GREEN at 528 with the reverted file. The AST check that caught the
+    original UnboundLocalError was run AD-HOC in-session and never committed as a test —
+    tech-debt rich-escape-sweep-manual-no-lint-guard is still OPEN precisely because no
+    guard exists. So the one defect class with a documented prevention currently has
+    ZERO automated protection, and a silent revert passes unnoticed.
+
+  DISPOSITION: >
+    sort.py is OUTSIDE this agent's write scope (src/** denied). It was NOT committed
+    and NOT reverted — the edit belongs to its unknown author and destroying an in-flight
+    working-tree change is itself a data-loss risk. It is left DIRTY and flagged here for
+    a human to adjudicate: accept (and drop the lesson's per-function rule) or discard.
+    The hoisted form is functionally correct; the objection is that it contradicts a
+    deliberate project convention recorded in sort.py's own comments and in lessons.
