@@ -1,0 +1,124 @@
+# NAS AI File Sorter — Session Log 010
+# AUTO: session-close (subagent) — verified facts only
+---
+date: 2026-10-03
+session_type: "drive the untested classify display branch; real regex defect fixed; 2 debt items added"
+agent: session-close
+code_commit: 03ed046   # already committed AND pushed before this sync
+plan_spec: null        # ad-hoc coverage session, no plan-spec batch structure
+---
+# FACT_ACCT: {
+#   added:    session-log-010.yaml (this file), 4 lessons (35 -> 39),
+#             2 tech-debt entries (classifier-json-repair-breaks-on-nested-braces,
+#             plan-spec-yaml-not-machine-parseable);
+#   moved:    classify-progress-display-branch-untested tech-debt -> resolved.yaml
+#             (OPEN 15 stays 15: -1 closed, +2 added);
+#   added_resolved: classify-display-lang-code-regex-defect (companion note);
+#   modified: .docs/index.yaml (SESSION_LOG 009->010, lessons 34->39, VERSION 1.4);
+#   NOT_TOUCHED: sort.py, sorter/**, tests/**, config.yaml, lessons 001-035,
+#             session-log-001..009, AGENTS.md}
+# STATUS: MEMORY SYNCED (no code written by session-close; the sorter was NOT run
+#   against the NAS; /mnt/NAS-Zeno/Diverse Daten untouched)
+
+## SESSION COVERED
+  session_10: test-cover-classify-display   # 03ed046 (tests/test_classify_display.py, sort.py)
+  nature: >
+    Test session that turned into a bug-fix session. No classification behaviour,
+    taxonomy, prompt, or routing semantics changed. The value was COVERAGE of a
+    display branch that had none — and, again, the real bug that coverage found.
+    Suite 545 -> 562 tests.
+
+## ─────────────────────────────────────────────────────────────
+## WORK RECORDED (commit 03ed046)
+## ─────────────────────────────────────────────────────────────
+1_DISPLAY_BRANCH_NOW_DRIVEN
+  - sort.py's _classify_with_progress display branch had NO runtime test. The
+    session-009 escape() lint guard (0748fd5) asserts a STATIC property only — it
+    never EXECUTES the branch. Coverage and guard were genuinely separate debts.
+  - NEW tests/test_classify_display.py — 17 tests driving the REAL
+    sort.py::_classify_with_progress.
+  - SEAM KEPT MINIMAL on purpose: only OllamaClient.from_config and the two taxonomy
+    loaders are stubbed. resolve_category and FileEntry remain REAL production code,
+    so the test exercises the actual category-resolution and FileEntry construction
+    rather than test doubles that agree with them by construction.
+  - Closes tech-debt classify-progress-display-branch-untested -> resolved.yaml.
+    Companion entry added: classify-display-lang-code-regex-defect.
+
+2_REAL_BUG_FOUND_BY_DRIVING_THE_BRANCH   # highest-value item of the session
+  - FOUND BY THE TEST, not by reading the code — the same pattern as session-009,
+    where covering the folder gate exposed the Rich-markup drop.
+  - The language-code regex captured the head of the NEXT word for the common
+    phrasing "detected language: de", printing `(lang: la)` in the terminal.
+  - Shipped: \b(?:(?:language|detected)\s+)?(?:detected|language|lang)\b[:\s]+([a-z]{2,3})\b
+  - DISPLAY-ONLY, verified rather than assumed: the rendered string reaches no move,
+    delete, routing, or undo-log decision. It is a console string.
+
+3_MUTATION_TESTING_AND_THE_EQUIVALENT-MUTANT_CAVEAT
+  - 11 mutations of sort.py's display branch; 10 caught by the new tests.
+  - The 11th — dropping the optional qualifier prefix — is an EQUIVALENT MUTANT, not
+    a gap: outputs diffed across a 10-case matrix old-vs-new gave ZERO behavioural
+    difference. Reported as such rather than counted as a miss, because "the suite
+    cannot kill it" and "it changes nothing" are different claims and only the second
+    was proven. An unproven equivalent mutant must never be recorded as a pass.
+
+4_TWO_VACUITY_TRAPS_HIT WHILE BUILDING THE TESTS
+  - First draft passed only 4 of 9 mutations: fixtures used BRACKET-FREE values, so
+    escape(cat)/escape(reason)/escape(suggested) were unobservable at runtime. A
+    DRIVEN test can be decorative in exactly the way a static guard is — driving the
+    code is not enough if the DATA lacks the property under test.
+  - `assert "de" in text` passed even with language detection stubbed to "?" because
+    the REASON text also contained "de". Loose substring assertions are satisfied by
+    the wrong half of the output.
+  - A reviewer's suggested regex fix was itself WRONG — it broke `detected: de` and
+    `language detected: es`. Caught by a case matrix, not by review authority.
+  - LESSONS: 4 appended (35 -> 39).
+
+5_AUDIT_THE_DEFECT_CLASS_FOUND_A_SECOND_INSTANCE
+  - Asking "where else does a regex stand in for a parser it cannot express?"
+    located the SAME defect class at sorter/classifier.py:353:
+    re.findall(r'\{[^}]+\}', ...) cannot match NESTED braces, so
+    {"a":1,"b":{"c":2},"d":3} yields the truncated fragment {"a": 1, "b": {"c": 2},
+    which fails json.loads again and the record is SILENTLY DROPPED.
+  - Filed OPEN: classifier-json-repair-breaks-on-nested-braces. Audited and REPRODUCED,
+    not fixed — outside this session's scope.
+
+6_TOOLING_DEFECT_FOUND_IN_PASSING
+  - 2 of 4 active ~/.opencode/plan/plan-spec-*.yaml files FAIL yaml.safe_load:
+    unquoted keys containing parentheses parse as complex keys, and values containing
+    a bare ": " trigger "mapping values are not allowed here". Verified PRE-EXISTING
+    (the pristine archive copy fails identically), so not edit damage.
+  - Filed OPEN: plan-spec-yaml-not-machine-parseable. Cosmetic while plans are read
+    as text — but a parser that swallows the error and returns [] is
+    INDISTINGUISHABLE from "no plans exist".
+  - SAME DEFECT CLASS, FOUND IN THIS REPO WHILE VERIFYING THE ABOVE: every
+    session-log-*.yaml (001-010) AND 2026-09-17-nas-file-sorter-design.yaml are
+    prose-with-`---`-separated-frontmatter, NOT machine-parseable YAML.
+    yaml.safe_load fails on all of them; only index.yaml, lessons.yaml,
+    resolved.yaml and tech-debt.yaml parse. This is the repo's long-standing house
+    format and session-log-010 follows it deliberately — it is recorded as a ROUTING
+    FACT in index.yaml, NOT filed as new debt, because converting 11 documents is
+    out of scope for this sync. Any future tool that wants to enumerate sessions MUST
+    fail loudly rather than default to an empty list.
+
+## ─────────────────────────────────────────────────────────────
+## DEBT DELTA
+## ─────────────────────────────────────────────────────────────
+  OPEN tech-debt entries: 15 (was 15).
+    -1 classify-progress-display-branch-untested  -> resolved.yaml
+    +1 classifier-json-repair-breaks-on-nested-braces   (new, from the class audit)
+    +1 plan-spec-yaml-not-machine-parseable             (new, from tooling audit)
+  resolved.yaml: 5 -> 7 entries.
+  lessons.yaml: 35 -> 39 entries (append-only; verified 35 before and after, md5 of
+    the first 34056 bytes unchanged, so no entry was rewritten or lost).
+
+  SUITE: 545 -> 562 passed, 0 failed. INDEPENDENTLY RE-MEASURED at session close
+  with ~/.venvs/data-sorter/bin/python -m pytest tests/ -q -p no:cacheprovider
+  -> "562 passed in 2.11s". AGENTS.md + README.md updated 545 -> 562 in 03ed046.
+
+  KNOWN STALE (NOT FIXED HERE — outside this agent's write scope): >
+    tech-debt test-count-stale-in-docs stays OPEN by design (recurring process
+    hazard, no fixed state); its note still quotes 528 from session-009. The count
+    drift it describes is real and unchanged in kind. AGENTS.md's OPEN_DEBT line was
+    corrected to 15 inside 03ed046 and is now correct.
+  STATUS: MEMORY SYNCED (docs only; sorter NOT run against the NAS; no user data
+  touched; HEAD not rewritten)

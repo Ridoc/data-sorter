@@ -551,3 +551,97 @@
     succeeded; never as evidence the break was harmless.
   session: nas-file-sorter-009
   confidence: verified
+- id: 2026-10-03-fixtures-must-carry-markup-to-be-observable
+  domain: testing/vacuity
+  root_cause: >
+    A DRIVEN test can be decorative in exactly the way a static presence-only guard is.
+    My first draft of tests/test_classify_display.py passed only 4 of 9 mutations,
+    because every fixture value was bracket-free ("Photos", "Holiday pics"). With no
+    `[` in the data, escape(cat) / escape(reason) / escape(suggested) are no-ops at
+    runtime: every mutation that removed or misplaced an escape() call produced
+    byte-identical output, so the tests could not possibly catch it. The assertions
+    looked reasonable and the branch was genuinely executed — driving the code was
+    simply not sufficient, because the DATA lacked the property under test. This is
+    the same structural error as 2026-10-03-guard-that-checks-presence-only-is-vacuous
+    one level up: the test collected evidence from a set that cannot contain a
+    counterexample.
+  prevention: >
+    (1) When a test's purpose is to prove a TRANSFORMATION, make sure the fixtures
+    carry the INPUT that the transformation exists to neutralise. A bracket-free
+    fixture cannot observe bracket escaping; a fixture with no quotes cannot observe
+    quote handling; a fixture with no unicode cannot observe an encoding guard.
+    (2) Ask of every escaping/sanitising assertion: "what would this print if the
+    escape were deleted?" If the answer is "the same string", the fixture is wrong,
+    not the assertion.
+    (3) Treat a low mutation-kill rate as a FIXTURE defect first and an assertion
+    defect second. 4/9 was interpreted correctly only because the mutation run had
+    already been done — without it, the draft would have shipped as "covered".
+  session: nas-file-sorter-010
+  confidence: verified
+
+- id: 2026-10-03-loose-substring-assertions-hide-defects
+  domain: testing/assertions
+  root_cause: >
+    `assert "de" in text` passed even when language detection was stubbed to return
+    "?" — because the rendered REASON text also contained the substring "de"
+    (in "detected"/"defined"). The assertion was satisfied by the wrong half of the
+    output. A substring assertion is a claim about "somewhere in this blob"; the
+    behaviour under test is a claim about "this specific rendered field". Any
+    assertion loose enough to be satisfied incidentally will be, whenever the
+    incidental source happens to contain the fragment.
+  prevention: >
+    (1) Pin the field, not the fragment: assert on the FULL parenthesised rendered
+    value `(lang: de)` rather than `"de"`, so the assertion cannot be satisfied by
+    neighbouring text.
+    (2) When asserting on rendered/prose output, prefer an ANCHORED match that binds
+    the value to its label, and make the stub values mutually distinguishable — if
+    every stub can return the same token, the assertion carries no information.
+    (3) Generalisation: for each assertion ask WHICH LINE/MERGE made it pass. If the
+    answer is "more than the one under test", it is a decorative assertion.
+  session: nas-file-sorter-010
+  confidence: verified
+
+- id: 2026-10-03-reviewer-suggested-fix-can-itself-regress
+  domain: review/change-control
+  root_cause: >
+    A test reviewer's suggested fix for the lang-code regex was itself WRONG: it broke
+    `detected: de` and `language detected: es`, two phrasings the shipped regex
+    handles. Review authority is not correctness evidence — the suggestion was
+    confidently reasoned and still regressed two inputs, and it would have passed any
+    check that only re-ran the tests written against the NEW behaviour. The failure
+    mode is trusting the proposer's intent instead of the proposer's OUTPUT.
+  prevention: >
+    (1) Never accept a regex/logic change on review authority alone. Run a CASE MATRIX
+    of old-vs-new across every input phrasing the feature must handle, and diff the
+    outputs — the same differential that proved the fix is a pure move
+    (2026-10-03-prove-pure-moves-by-differential) proves the replacement equivalent.
+    (2) Zero behavioural difference across the matrix is the PASS condition; anything
+    else is a regression regardless of how the reviewer phrased it.
+    (3) Extend the matrix to the phrasings the reviewer did NOT mention: reviewers
+    reason about the case they are looking at, which is where the holes are.
+  session: nas-file-sorter-010
+  confidence: verified
+
+- id: 2026-10-03-audit-the-class-after-fixing-a-bug
+  domain: debugging/generalisation
+  root_cause: >
+    After the lang-regex defect was fixed, asking "where else does a regex stand in
+    for a parser it cannot express?" found the SAME defect class at
+    sorter/classifier.py:353 within minutes: `re.findall(r'\{[^}]+\}', ...)` cannot
+    match NESTED braces, so a reply like `{"a":1,"b":{"c":2},"d":3}` yields the
+    truncated fragment `{"a": 1, "b": {"c": 2}`, which fails json.loads again and is
+    silently DROPPED. Fixing the instance without auditing the class leaves a known
+    live bug of the same shape sitting in the next file, now with a documented
+    precedent for why nobody questioned it.
+  prevention: >
+    (1) After fixing a bug, spend one search asking what ELSE shares its defect
+    CLASS, not just its string. The class here is "regex used as a parser where the
+    real grammar needs balanced-delimiter or context-free matching".
+    (2) File what the audit finds as OPEN debt with a REPRO (`re.findall` on a nested
+    payload), not as a vague "check similar code" note — an unreproduced suspicion
+    decays into nothing within a session.
+    (3) Prefer RAISING over silent partial parses in recovery paths: a swallowed
+    parse error that returns a short list is indistinguishable from "nothing to do",
+    which is how a dropped record stays invisible to the user.
+  session: nas-file-sorter-010
+  confidence: verified

@@ -107,4 +107,73 @@ ENTRIES:
       2026-10-03-guard-that-checks-presence-only-is-vacuous.
       Companion entry, deliberately NOT closed by this commit: classify-progress-display-branch-untested
       — 0748fd5 guards the escape() property statically but still does not DRIVE the
-      _classify_with_progress display branch at runtime.
+      _classify_with_progress display branch at runtime. That companion is now CLOSED by
+      03ed046; see classify-progress-display-branch-untested below.
+
+  - id: classify-progress-display-branch-untested
+    resolved_in: nas-file-sorter-010 (commit 03ed046)
+    description: >
+      sort.py's _classify_with_progress display branch — the code that renders each
+      classification to the terminal while a batch runs — had NO runtime test. The
+      session-009 escape() lint guard (0748fd5) only asserts a STATIC property
+      (escape() present at every console.print/Table.add_row); it never EXECUTES the
+      branch. Coverage and static guard are different debts, and this was the coverage one.
+    resolution: >
+      NEW tests/test_classify_display.py — 17 tests that drive the REAL
+      sort.py::_classify_with_progress. The seam is deliberately minimal: only
+      OllamaClient.from_config and the two taxonomy loaders are stubbed, so
+      resolve_category and FileEntry remain REAL production code rather than test
+      doubles. 545 -> 562 tests.
+    confidence: verified
+    evidence:
+      mutation_testing: >
+        11 mutations of sort.py's display branch; 10 caught by the new tests.
+        The 11th — dropping the optional qualifier prefix — is an EQUIVALENT MUTANT,
+        not a gap: outputs were diffed across a 10-case matrix old-vs-new and the
+        behavioural difference was zero. It is reported here rather than counted as a
+        miss, because "the suite cannot kill it" and "it changes nothing" are different
+        claims and only the second was proven.
+      caught_the_defect: >
+        Driving the branch found a REAL BUG that code inspection had not: the
+        language-code regex printed `(lang: la)` for the reply text
+        "detected language: de", capturing the head of the NEXT word instead of the
+        2-letter code. Fixed in the same commit (see the companion entry below).
+    note: >
+      Two vacuity traps were hit while building these tests and are recorded as lessons
+      rather than left as folklore:
+      (1) The FIRST draft passed only 4 of 9 mutations because its fixtures used
+      BRACKET-FREE values, making escape(cat)/escape(reason)/escape(suggested)
+      unobservable — a driven test can be decorative in exactly the way a static
+      presence-only guard is. Fixtures must carry MARKUP for the escaping to be
+      observable at all.
+      (2) `assert "de" in text` passed even with language detection stubbed to "?"
+      because the REASON text also contained the substring "de". A loosely-asserted
+      substring hides defects; pin the PARENTHESISED RENDERED VALUE, not a fragment.
+      Both are recorded in lessons.yaml for session nas-file-sorter-010.
+
+  - id: classify-display-lang-code-regex-defect
+    resolved_in: nas-file-sorter-010 (commit 03ed046)
+    description: >
+      The display branch's language-code regex captured the head of the next word for
+      the common phrasing "detected language: de", rendering `(lang: la)` in the
+      terminal. Purely cosmetic in isolation — but it is the kind of wrong-looking
+      output that trains the operator to distrust every other line the sorter prints.
+      FOUND BY THE TEST above, not by reading the code.
+    resolution: >
+      Shipped regex:
+      \b(?:(?:language|detected)\s+)?(?:detected|language|lang)\b[:\s]+([a-z]{2,3})\b
+      — an optional qualifier prefix ("language"/"detected") followed by the keyword,
+      then the 2-3 letter code. Pinned by tests in test_classify_display.py.
+    confidence: verified
+    note: >
+      DISPLAY-ONLY, and this was verified rather than assumed: the rendered string
+      reaches no move, delete, routing, or undo-log decision. It is a console string.
+      A reviewer-suggested alternative regex for this fix was REJECTED after a case
+      matrix showed it broke `detected: de` and `language detected: es` — see lesson
+      2026-10-03-reviewer-fix-can-itself-regress.
+      SIBLING DEFECT FOUND WHILE AUDITING ITS CLASS: the same "regex used as a parser
+      where it cannot express the real grammar" mistake exists at
+      sorter/classifier.py:353 (re.findall(r'\{[^}]+\}') cannot match nested braces, so
+      a nested object yields a truncated fragment and the record is silently DROPPED).
+      Filed as OPEN debt classifier-json-repair-breaks-on-nested-braces — audited, not
+      fixed, as it is outside this session's scope.

@@ -1,13 +1,21 @@
 L0_ROUTER:
-  VERSION: "1.4"
+  VERSION: "1.5"
   PATH_ROUTES: {}
   CONCEPT_ROUTES:
     TECH_DEBT: ".docs/tech-debt.yaml"            # open debt only, 15 entries (+ TOOLING_NOTES section)
-    RESOLVED: ".docs/resolved.yaml"              # confirmed resolutions (moved OUT of tech-debt)
+    RESOLVED: ".docs/resolved.yaml"              # confirmed resolutions (moved OUT of tech-debt), 7 entries
     DESIGN: ".docs/2026-09-17-nas-file-sorter-design.yaml"  # v1.0 spec
-    SESSION_LOG: ".docs/session-log-009.yaml"     # folder-confirm gate + Rich-markup sweep + escape import-scope bug + CONCURRENT WRITER incident
-    LESSONS: ".docs/lessons.yaml"                 # append-only lessons ledger (34 entries)
-# NOTE: session-log-001..009 are per-session detail leaves. SESSION_LOG routes to the
+    SESSION_LOG: ".docs/session-log-010.yaml"     # classify display branch driven (17 tests) + lang-regex defect fixed + 2 debt items
+    LESSONS: ".docs/lessons.yaml"                 # append-only lessons ledger (39 entries)
+# NOTE: session-log-001..010 are per-session detail leaves. SESSION_LOG routes to the
 # LATEST; earlier logs are read only on demand (need-to-know, not read-all).
 # TOOLING_NOTES (agent-session facts: /tmp wipe, hindsight 402) live at the BOTTOM of
 # tech-debt.yaml — toolchain problems, NOT project lessons; do not file them in lessons.yaml.
+#
+# MACHINE-READABILITY (verified 2026-10-03, session 010):
+#   yaml.safe_load WORKS : index.yaml, lessons.yaml, resolved.yaml, tech-debt.yaml
+#   yaml.safe_load FAILS : session-log-001..010, 2026-09-17-nas-file-sorter-design.yaml
+#     -> those use the house format (prose body + `---`-separated frontmatter), not
+#        parseable YAML. Read them as TEXT. Same defect class as the open debt item
+#        plan-spec-yaml-not-machine-parseable. Any tool enumerating sessions MUST fail
+#        loudly — a parser returning [] on error is indistinguishable from "none exist".
