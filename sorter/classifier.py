@@ -140,7 +140,6 @@ class OllamaClient:
         fallback_model: str = "qwen2.5:1.5b",
         timeout: int = 60,
         batch_size: int = 8,
-        retry_attempts: int = 2,
         delete_candidate_years: float = 10.0,
         archive_years: float = 5.0,
     ):
@@ -149,7 +148,6 @@ class OllamaClient:
         self.fallback_model = fallback_model
         self.timeout = timeout
         self.batch_size = batch_size
-        self.retry_attempts = retry_attempts
         self.delete_candidate_years = delete_candidate_years
         self.archive_years = archive_years
 
@@ -227,15 +225,6 @@ class OllamaClient:
         left = self._retry_with_smaller_batches(entries[:mid], taxonomy_yaml)
         right = self._retry_with_smaller_batches(entries[mid:], taxonomy_yaml)
         return left + right
-
-        path_to_result = {r["path"]: r for r in results if "path" in r}
-        merged: List[Dict] = []
-        for f in files:
-            if f.rel_path in path_to_result:
-                merged.append(path_to_result[f.rel_path])
-            else:
-                merged.append(self._fallback_single(f.rel_path))
-        return merged
 
     def classify_single(
         self, file_entry: FileEntry, content: Dict, taxonomy_yaml: str

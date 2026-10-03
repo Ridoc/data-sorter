@@ -715,9 +715,62 @@ def step_undo(cfg: Dict, nas_root: Path, csv_path: Path, dry_run: bool):
     return result
 
 
+def _confirm_folder_moves(approved_folder_moves: List[Dict], nas_root: Path, console) -> List[Dict]:
+    """Folder-move confirmation gate: list every proposed folder move, ask once for
+    approval, return the approved subset.
+
+    'all' keeps the list as-is, 'none' approves nothing, 1-based indices approve
+    exactly those folders. Fail-closed: anything unparseable (typos, mixed valid
+    and invalid tokens, empty input) approves NOTHING rather than guessing — this
+    prompt is the last confirmation before folders start moving on the user's NAS.
+    """
+    # Local import (rich is deliberately not imported at module level), hoisted out
+    # of the loop: escape() is required because every bracket pair below is Rich
+    # MARKUP, so a folder named "[bold]X" would otherwise render as altered text.
+    from rich.markup import escape
+    from sorter.deduper import DedupScanner
+
+    console.print("\n[bold]📁 Folder moves require confirmation:[/]")
+    for idx, fm in enumerate(approved_folder_moves, 1):
+        src = fm.get("source", "")
+        tgt = fm.get("target", "")
+        fcount = fm.get("file_count", 0)
+        tsize = fm.get("total_size", 0)
+        size_str = DedupScanner._format_size(tsize) if tsize else "0 B"
+        # Display target relative to nas_root
+        tgt_rel = str(Path(tgt).relative_to(nas_root)) if tgt else "?"
+        is_review = fm.get("confidence", 0) == 0
+        # Our naming, not the model's verdict — must be eyeballed before it moves.
+        prefix = "⚠️ [REVIEW] " if is_review else ("⚠️ [derived] " if fm.get("_derived") else "")
+        # This listing is the LAST human check before folders move on the real NAS, so
+        # a name that misrenders is a name consent is given against: escape src/target too.
+        console.print(
+            f"  [{idx}] {escape(prefix)}"
+            f"[cyan]{escape(str(Path(src).relative_to(nas_root)))}[/] → "
+            f"[green]{escape(tgt_rel)}[/] "
+            f"({fcount} files, {size_str}) [dim]conf={fm.get('confidence',0)}%[/]"
+        )
+    console.print(
+        "  Approve folders (e.g. '1 3' or 'all' or 'none'): ",
+        end="",
+        style="bold",
+    )
+    resp = input().strip()
+    if resp.lower() == "none":
+        return []
+    if resp.lower() == "all":
+        return approved_folder_moves
+    try:
+        indices = set(int(x) for x in resp.split())
+    except ValueError:
+        indices = set()
+    return [fm for i, fm in enumerate(approved_folder_moves, 1) if i in indices]
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(
@@ -1111,41 +1164,7 @@ Examples:
     # folder move before we touch anything.  File moves use the existing
     # confidence gate (no individual prompts).
     if approved_folder_moves and not args.dry_run and not args.execute:
-        console.print("\n[bold]📁 Folder moves require confirmation:[/]")
-        for idx, fm in enumerate(approved_folder_moves, 1):
-            src = fm.get("source", "")
-            tgt = fm.get("target", "")
-            fcount = fm.get("file_count", 0)
-            tsize = fm.get("total_size", 0)
-            from sorter.deduper import DedupScanner
-            size_str = DedupScanner._format_size(tsize) if tsize else "0 B"
-            # Display target relative to nas_root
-            tgt_rel = str(Path(tgt).relative_to(nas_root)) if tgt else "?"
-            is_review = fm.get("confidence", 0) == 0
-            # Our naming, not the model's verdict — must be eyeballed before it moves.
-            prefix = "⚠️ [REVIEW] " if is_review else ("⚠️ [derived] " if fm.get("_derived") else "")
-            console.print(
-                f"  [{idx}] {prefix}[cyan]{Path(src).relative_to(nas_root)}[/] → [green]{tgt_rel}[/] "
-                f"({fcount} files, {size_str}) [dim]conf={fm.get('confidence',0)}%[/]"
-            )
-        console.print(
-            "  Approve folders (e.g. '1 3' or 'all' or 'none'): ",
-            end="",
-            style="bold",
-        )
-        resp = input().strip()
-        if resp.lower() == "none":
-            approved_folder_moves = []
-        elif resp.lower() != "all":
-            # Parse selected indices
-            try:
-                indices = set(int(x) for x in resp.split())
-            except ValueError:
-                indices = set()
-            approved_folder_moves = [
-                fm for i, fm in enumerate(approved_folder_moves, 1) if i in indices
-            ]
-        # else: 'all' keeps them as-is
+        approved_folder_moves = _confirm_folder_moves(approved_folder_moves, nas_root, console)
     elif approved_folder_moves and args.execute:
         # --execute: auto-approve ONLY confident folder moves. Review-moves
         # (failed/uncertain folders, confidence 0) must NOT be moved silently

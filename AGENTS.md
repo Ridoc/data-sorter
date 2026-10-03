@@ -46,7 +46,8 @@ Non-negotiable. A diff that violates any of these is a bug regardless of test st
 ## MODULE_MAP
 
 Pipeline: `scanner → extractor → classifier → folder_classifier → routing → reviewer → executor → undo`
-`sort.py` = CLI entry + orchestration, incl. the per-folder confirmation gate (~line 574).
+`sort.py` = CLI entry + orchestration, incl. the per-folder confirmation gate
+(`_confirm_folder_moves()` — integration-tested in `tests/test_folder_gate.py`).
 
 | Module | Role |
 |---|---|

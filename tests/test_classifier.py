@@ -231,6 +231,18 @@ class TestFromConfig:
         assert client.timeout == 30
         assert client.batch_size == 10
 
+    def test_retry_attempts_dead_config_removed(self):
+        """tech-debt retry-attempts-not-wired.
+
+        retry_attempts was a constructor default that no retry path ever read and
+        from_config never passed. Removed — pin it so it cannot creep back unwired.
+        """
+        import inspect
+
+        params = inspect.signature(OllamaClient.__init__).parameters
+        assert "retry_attempts" not in params
+        assert not hasattr(OllamaClient(), "retry_attempts")
+
 
 class TestValidateSuggestedName:
     def test_none_input(self):

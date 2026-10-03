@@ -15,15 +15,18 @@ import pytest
 REPO = Path(__file__).resolve().parent.parent
 SRC = (REPO / "sort.py").read_text()
 TREE = ast.parse(SRC)
-MAIN = next(n for n in TREE.body
-            if isinstance(n, ast.FunctionDef) and n.name == "main")
+# Scope is the whole module, not just main(): the confirmation gate was extracted
+# into _confirm_folder_moves(). These tests assert the SAFETY PROPERTIES of those
+# statements, which must keep holding wherever the gate lives — pinning them to
+# main() would make a pure refactor look like a regression.
+SCOPE = TREE
 
 
 def _grab(pred, what):
-    for node in ast.walk(MAIN):
+    for node in ast.walk(SCOPE):
         if isinstance(node, ast.Assign) and pred(node):
             return ast.get_source_segment(SRC, node)
-    raise AssertionError(f"statement not found in sort.main(): {what}")
+    raise AssertionError(f"statement not found in sort.py: {what}")
 
 
 @pytest.fixture(scope="module")
@@ -55,6 +58,14 @@ def stmts():
             and isinstance(n.targets[0].slice, ast.Constant)
             and n.targets[0].slice.value == "_derived",
             "move['_derived'] propagation"),
+        # WHY extracted too: the gate test below USES is_review to pick the expected
+        # prefix. Hardcoding it in the test body made the suite green even when
+        # production changed `== 0` to `< 50` — the exact vacuity this module exists
+        # to eliminate (a test must never encode the predicate it is testing).
+        "is_review": _grab(
+            lambda n: isinstance(n.targets[0], ast.Name)
+            and n.targets[0].id == "is_review",
+            "is_review predicate"),
     }
 
 
@@ -81,8 +92,18 @@ def test_confirmation_gate_prefix(stmts, derived, conf, want):
     fm = {"confidence": conf}
     if derived is not None:
         fm["_derived"] = derived
-    ns = _run(stmts["prefix"], {"fm": fm, "is_review": fm.get("confidence", 0) == 0})
+    # is_review comes from the REAL production statement, not from this test body.
+    ir = _run(stmts["is_review"], {"fm": fm})
+    ns = _run(stmts["prefix"], {"fm": fm, "is_review": ir["is_review"]})
     assert ns["prefix"] == want
+
+
+def test_is_review_predicate_flags_only_zero_confidence(stmts):
+    """Pins the gate's own rule: review == confidence 0 (a failed/uncertain
+    classification), NOT merely 'below some threshold'."""
+    for conf, want in [(0, True), (49, False), (50, False), (85, False)]:
+        ir = _run(stmts["is_review"], {"fm": {"confidence": conf}})
+        assert ir["is_review"] is want, conf
 
 
 def test_execute_filter_excludes_derived(stmts):
@@ -112,3 +133,36 @@ def test_ready_summary_silent_without_derived(stmts):
     ns = _run(stmts["note"], ns)
     assert ns["derived_folder_count"] == 0
     assert ns["derived_note"] == ""
+
+
+def test_gate_is_reachable_from_main():
+    """The statements above are only safety guarantees if the LIVE gate calls them.
+
+    Widening SCOPE to the module means a dead/unreachable copy would satisfy the
+    other tests, so pin reachability separately: main() must both invoke
+    _confirm_folder_moves() and keep the guard that gates it (interactive only —
+    never under --dry-run or --execute).
+    """
+    main_fn = next(
+        n for n in TREE.body
+        if isinstance(n, ast.FunctionDef) and n.name == "main"
+    )
+    # The call sits in an If BODY, not its condition — search the body statements.
+    def _calls_gate(node):
+        return any(
+            isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Name)
+            and n.func.id == "_confirm_folder_moves"
+            for n in ast.walk(node)
+        )
+
+    guards = [
+        n for n in ast.walk(main_fn)
+        if isinstance(n, ast.If) and _calls_gate(n)
+    ]
+    assert guards, "main() no longer calls _confirm_folder_moves() — gate unreachable"
+
+    guard_src = ast.get_source_segment(SRC, guards[0].test)
+    for attr in ("dry_run", "execute"):
+        assert attr in guard_src, f"gate guard lost its '{attr}' check: {guard_src}"
+    assert "approved_folder_moves" in guard_src
