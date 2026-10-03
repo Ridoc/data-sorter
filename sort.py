@@ -1257,7 +1257,7 @@ Examples:
         result = {"moved": 0, "deleted": 0, "failed": 0}
         for move in approved_moves:
             from sorter.executor import (_move_file, _move_folder, _dissolve_folder,
-                                    folder_move_records, log_move, ensure_dir)
+                                    folder_move_records, resolve_dir_target, log_move, ensure_dir)
             source = Path(move["source"])
             target = Path(move["target"])
 
@@ -1283,8 +1283,9 @@ Examples:
             if move.get("is_folder"):
                 # Capture per-file undo rows BEFORE the move; afterwards the source
                 # paths no longer exist to hash.
-                records = folder_move_records(source, target)
-                ok = _move_folder(source, target, dry_run=False)
+                actual = resolve_dir_target(target)
+                records = folder_move_records(source, actual)
+                ok = _move_folder(source, actual, dry_run=False)
                 if ok:
                     result["moved"] += 1
                 else:

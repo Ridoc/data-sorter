@@ -126,6 +126,37 @@ class TestRootContainment:
         assert (src / "a.jpg").read_bytes() == b"A"
         assert (src / "deep" / "b.jpg").read_bytes() == b"B"
 
+    def test_folder_move_collision_undo_row_names_the_real_destination(self, tmp_path):
+        """A folder move onto an EXISTING name bumps to X_1. The undo row must name
+        X_1, not the intended X — otherwise --undo hunts for a path that never
+        existed and strands the moved folder. Found by the BATCH_5 real-execution run.
+        """
+        nas = tmp_path / "nas"
+        src = nas / "src2" / "X"
+        src.mkdir(parents=True)
+        (src / "moved.txt").write_bytes(b"M")
+        existing = nas / "collide" / "X"
+        existing.mkdir(parents=True)
+        (existing / "keep.txt").write_bytes(b"K")
+        csv_path = nas / ".sort_logs" / "sort_undo.csv"
+
+        execute_moves([{"source": str(src), "target": str(existing), "is_folder": True}],
+                      [], nas, csv_path, tmp_path / "_Trash", dry_run=False)
+
+        rows = [r for r in csv.DictReader(open(csv_path)) if r["action"] == "move"]
+        assert len(rows) == 1, rows
+        assert rows[0]["target_path"].endswith("X_1/moved.txt"), \
+            f"undo row must name the bumped destination: {rows[0]['target_path']}"
+        assert (nas / "collide" / "X_1" / "moved.txt").exists()
+        assert (existing / "keep.txt").read_bytes() == b"K", "pre-existing must be untouched"
+
+        result = undo_last_run(csv_path, nas, dry_run=False)
+        assert result["failed"] == 0, result
+        assert (src / "moved.txt").read_bytes() == b"M", "the moved file must come back"
+        assert list((nas / "collide" / "X_1").iterdir()) == [], \
+            "undo restores the FILE; the bumped dir is left empty (no rmtree — SAFETY_INVARIANT #1)"
+        assert (existing / "keep.txt").read_bytes() == b"K"
+
     def test_within_root_accepts_real_moves(self, tmp_path):
         nas = tmp_path / "nas"
         (nas / "Media").mkdir(parents=True)

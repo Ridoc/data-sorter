@@ -14,27 +14,39 @@ from datetime import datetime
 _CHUNK_SIZE = 65536
 
 
-def _move_folder(source: Path, target: Path, dry_run: bool = False) -> bool:
-    """Move an entire directory tree, creating parent dirs as needed."""
+def resolve_dir_target(target: Path) -> Path:
+    """The path a folder move will ACTUALLY land on.
+
+    WHY separate: `_move_folder` used to resolve the collision into its own local
+    variable, so callers that logged undo rows beforehand recorded the intended
+    destination. On a name clash that path never exists, `--undo` cannot find the
+    file, and the moved folder is stranded at the bumped name. Both the mover and
+    the undo-row builder must agree, so the bump lives here.
+    """
+    if not target.exists():
+        return target
+    stem, parent, counter = target.stem, target.parent, 1
+    while target.exists():
+        target = parent / f"{stem}_{counter}"
+        counter += 1
+    return target
+
+
+def _move_folder(source: Path, target: Path, dry_run: bool = False) -> Optional[Path]:
+    """Move an entire directory tree. Returns the ACTUAL destination, or None."""
     if not source.exists():
         print(f"Error: source folder not found: {source}", file=sys.stderr)
-        return False
+        return None
     if dry_run:
-        return True
+        return resolve_dir_target(target)
     ensure_dir(target.parent)
     try:
-        if target.exists():
-            stem = target.stem
-            parent = target.parent
-            counter = 1
-            while target.exists():
-                target = parent / f"{stem}_{counter}"
-                counter += 1
+        target = resolve_dir_target(target)
         shutil.move(str(source), str(target))
-        return True
+        return target
     except (PermissionError, OSError) as e:
         print(f"Error moving folder {source} -> {target}: {e}", file=sys.stderr)
-        return False
+        return None
 
 
 def folder_move_records(source: Path, target: Path) -> List[Dict]:
@@ -245,10 +257,11 @@ def execute_moves(
                     "original_name": "",
                 })
                 continue
-            # Per-file undo rows captured BEFORE the move; after it the source
-            # paths are gone and cannot be hashed. SAFETY_INVARIANT #2.
-            records = folder_move_records(source, target)
-            ok = _move_folder(source, target, dry_run=dry_run)
+            # Records must name the REAL destination (collision already resolved),
+            # or --undo looks for a path that never existed.
+            actual = resolve_dir_target(target)
+            records = folder_move_records(source, actual)
+            ok = _move_folder(source, actual, dry_run=dry_run)
             if ok:
                 moved += 1
             else:
